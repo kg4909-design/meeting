@@ -14,7 +14,7 @@
     .input-box label { font-size: 12px; color: #cbd5e1; display: block; margin-bottom: 6px; font-weight: 600; }
     .input-box input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 13px; outline: none; }
     .status-area { height: 70px; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
-    .status-text { font-size: 15px; color: #38bdf8; font-weight: 500; }
+    .status-text { font-size: 15px; color: #38bdf8; font-weight: 500; word-break: break-all; }
     .mic-button { width: 110px; height: 110px; border-radius: 50%; border: none; background: #3b82f6; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto 24px auto; box-shadow: 0 0 20px rgba(59, 130, 246, 0.4); transition: all 0.2s; -webkit-tap-highlight-color: transparent; }
     .mic-button.active { background: #ef4444; box-shadow: 0 0 30px rgba(239, 68, 68, 0.6); animation: pulse 1.8s infinite; }
     @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
@@ -50,9 +50,9 @@
     </div>
 
     <div class="guide">
-      • 말로 "타임" 또는 "피드백"이라고 해도 즉시 분석해 줍니다.<br>
-      • 말로 "다음 사람"이라고 하면 새 소개팅 상대로 전환됩니다.<br>
-      • 핸드폰 잠금 화면이 꺼지지 않도록 거치해두고 사용하세요.
+      • 연결되면 바로 "안녕하세요"라고 먼저 인사를 건네보세요.<br>
+      • 말로 "타임" 또는 "피드백"이라고 하면 즉시 4단계로 분석해 줍니다.<br>
+      • 말로 "다음 사람"이라고 하면 새 소개팅 상대로 전환됩니다.
     </div>
   </div>
 
@@ -84,8 +84,10 @@
 
     let websocket = null;
     let audioContext = null;
+    let inputAudioContext = null;
     let inputSource = null;
     let processor = null;
+    let mediaStream = null;
     let isConnected = false;
     let nextPlayTime = 0;
 
@@ -105,11 +107,24 @@
       }
       localStorage.setItem("gemini_api_key", apiKey);
 
-      updateStatus("소개팅 연결 중...", "#facc15");
+      updateStatus("마이크 권한 확인 중...", "#facc15");
 
       try {
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } });
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        updateStatus("서버 연결 중...", "#facc15");
 
         const host = "generativelanguage.googleapis.com";
         const path = `/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
@@ -119,28 +134,36 @@
 
         websocket.onopen = () => {
           isConnected = true;
-          updateStatus("대화 중 (상대방이 마주 앉았습니다)", "#4ade80");
+          updateStatus("연결 완료! 첫인사를 건네보세요.", "#4ade80");
           document.getElementById('startBtn').classList.add('active');
           document.getElementById('btnLabel').innerText = "통화 종료";
           document.getElementById('keyBox').style.display = "none";
 
-          // 초기 시스템 지침 전송
+          // 1. 모델과 지침을 담은 Setup 전송 (정식 지원 모델 적용)
           const setupMessage = {
             setup: {
-              model: "models/gemini-2.0-flash-exp",
+              model: "models/gemini-2.0-flash-realtime-exp",
               generationConfig: {
                 responseModalities: ["AUDIO"],
                 speechConfig: {
-                  voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } }
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: "Kore" // 부드럽고 차분한 여성 보이스
+                    }
+                  }
                 }
               },
-              systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] }
+              systemInstruction: {
+                parts: [{ text: SYSTEM_INSTRUCTION }]
+              }
             }
           };
           websocket.send(JSON.stringify(setupMessage));
 
-          // 마이크 오디오 전송 시작
-          startAudioStreaming(stream);
+          // 2. 약간의 여유를 두고 마이크 스트림 활성화
+          setTimeout(() => {
+            if (isConnected) startAudioStreaming(mediaStream);
+          }, 300);
         };
 
         websocket.onmessage = async (event) => {
@@ -153,7 +176,7 @@
 
           if (responseData.serverContent?.modelTurn?.parts) {
             for (const part of responseData.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType?.startsWith("audio/pcm")) {
+              if (part.inlineData && part.inlineData.mimeType?.startsWith("audio/pcm")) {
                 playPcmChunk(part.inlineData.data);
               }
             }
@@ -166,31 +189,34 @@
 
         websocket.onerror = (err) => {
           console.error("WebSocket 오류", err);
-          updateStatus("연결 오류가 발생했습니다.", "#ef4444");
-          disconnectSession();
         };
 
-        websocket.onclose = () => {
+        websocket.onclose = (event) => {
+          console.warn("연결 종료 코드:", event.code, "이유:", event.reason);
+          let reasonMsg = "통화가 종료되었습니다.";
+          if (event.code === 1008 || event.code === 1011) {
+            reasonMsg = "API 키 오류 또는 모델 권한 문제입니다.";
+          }
+          updateStatus(reasonMsg, "#ef4444");
           disconnectSession();
         };
 
       } catch (err) {
         console.error(err);
-        alert("마이크 권한을 허용해야 대화를 시작할 수 있습니다.");
+        alert("마이크 연결 실패: 마이크 사용을 허용해 주세요.");
         disconnectSession();
       }
     }
 
     function startAudioStreaming(stream) {
-      const inputContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      inputSource = inputContext.createMediaStreamSource(stream);
-      processor = inputContext.createScriptProcessor(4096, 1, 1);
+      inputAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      inputSource = inputAudioContext.createMediaStreamSource(stream);
+      processor = inputAudioContext.createScriptProcessor(4096, 1, 1);
 
       processor.onaudioprocess = (e) => {
-        if (!isConnected || websocket.readyState !== WebSocket.OPEN) return;
+        if (!isConnected || !websocket || websocket.readyState !== WebSocket.OPEN) return;
         const inputData = e.inputBuffer.getChannelData(0);
-        
-        // 16-bit PCM 변환
+
         const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           let s = Math.max(-1, Math.min(1, inputData[i]));
@@ -215,10 +241,11 @@
       };
 
       inputSource.connect(processor);
-      processor.connect(inputContext.destination);
+      processor.connect(inputAudioContext.destination);
     }
 
     function playPcmChunk(base64Data) {
+      if (!audioContext) return;
       const binaryString = atob(base64Data);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -247,7 +274,7 @@
     }
 
     function sendQuickText(textMessage) {
-      if (!isConnected || websocket.readyState !== WebSocket.OPEN) {
+      if (!isConnected || !websocket || websocket.readyState !== WebSocket.OPEN) {
         alert("먼저 통화를 시작해 주세요.");
         return;
       }
@@ -268,10 +295,15 @@
       if (websocket) { websocket.close(); websocket = null; }
       if (processor) { processor.disconnect(); processor = null; }
       if (inputSource) { inputSource.disconnect(); inputSource = null; }
+      if (inputAudioContext) { inputAudioContext.close(); inputAudioContext = null; }
       if (audioContext) { audioContext.close(); audioContext = null; }
-      updateStatus("통화가 종료되었습니다.", "#94a3b8");
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
       document.getElementById('startBtn').classList.remove('active');
       document.getElementById('btnLabel').innerText = "통화 시작";
+      document.getElementById('keyBox').style.display = "block";
     }
 
     function updateStatus(text, color) {
