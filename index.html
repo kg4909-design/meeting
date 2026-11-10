@@ -113,7 +113,6 @@
           }
         });
 
-        // Gemini Multimodal Live API 엔드포인트
         const host = "generativelanguage.googleapis.com";
         const path = `/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
         const uri = `wss://${host}${path}`;
@@ -123,10 +122,10 @@
         websocket.onopen = () => {
           updateStatus("시스템 설정 전송 중...", "#facc15");
 
-          // 1. 모델 핸드셰이크 Setup 전송
+          // 실시간 라이브 지원 모델로 확정 적용
           const setupMessage = {
             setup: {
-              model: "models/gemini-2.0-flash-exp",
+              model: "models/gemini-2.0-flash-realtime-exp",
               generationConfig: {
                 responseModalities: ["AUDIO"],
                 speechConfig: {
@@ -153,7 +152,6 @@
             responseData = JSON.parse(event.data);
           }
 
-          // 서버 설정이 완료되었을 때 오디오 스트림 활성화
           if (responseData.setupComplete) {
             isConnected = true;
             updateStatus("연결 완료! '안녕하세요'라고 말을 건네보세요.", "#4ade80");
@@ -186,7 +184,7 @@
           if (event.reason) {
             reasonMsg += ` - ${event.reason}`;
           } else if (event.code === 1006) {
-            reasonMsg = "서버 연결 실패 (API 키 권한 또는 네트워크 확인 필요)";
+            reasonMsg = "서버 연결 실패 (API 키 또는 네트워크 확인)";
           }
           updateStatus(reasonMsg, "#ef4444");
           disconnectSession();
@@ -310,7 +308,5 @@
       }
     };
   </script>
-</body>
-</html>
 </body>
 </html>
