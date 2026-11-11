@@ -124,6 +124,7 @@ svg text{fill:#a99bc0;font-size:9px}
   <label>상대가 알고 있는 내 정보 (프로필)</label>
   <textarea id="profile" style="min-height:64px" placeholder="예: 35세, 초등학교 교사 겸 작가 …"></textarea>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="sens" style="width:auto"> 민감한 질문 연습 (결정사 모드에서 이전 관계·이별 사유를 한 번 물어봐요)</label>
+  <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="srch" style="width:auto"> 실제 장소·곡 검색 사용 (끄면 검색 없이 프로필 설정만 AI가 만들어요)</label>
   <div class="small">상대의 목소리, 성격, 만날 지역(서울·인천·경기)은 매번 자동으로 정해져요. API 키·기록은 이 브라우저에만 저장되지만, 대화 내용과 위 프로필은 AI 처리를 위해 Google Gemini로 전송돼요. 민감한 개인정보는 필요한 만큼만 적으세요. 상대는 AI가 연기하는 가상 인물이며 실제 사람의 반응과 다를 수 있어요.</div>
 </div>
 
@@ -211,9 +212,11 @@ svg text{fill:#a99bc0;font-size:9px}
 </div></div>
 
 <script>
+// ▼▼ 개인용: 따옴표 사이에 API 키를 붙여넣으면 매번 입력하지 않아도 돼요. 이 파일을 다른 사람에게 보내거나 인터넷에 올릴 땐 반드시 비워 두세요. ▼▼
+const FIXED_KEY="";
 const $=id=>document.getElementById(id);
 const MODEL="models/gemini-3.8-live";
-const TEXT_MODELS=["gemini-3.8-flash","gemini-3.5-flash"];
+const TEXT_MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash"];
 const RK="dating_records_v2",KK="gemini_api_key",NK="sim_memo_v1",OK="sim_overall_v1";
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
 const pick=a=>a[Math.floor(Math.random()*a.length)];
@@ -417,7 +420,7 @@ async function streamCall(system,userText,ui,onText,estLen,opts){
     else ui.fill.classList.add('ind');
     ui.meta.textContent=meta;
   },500);
-  let lastErr=new Error("알 수 없는 오류");
+  let lastErr=new Error("알 수 없는 오류");const errs=[];
   try{
     for(const model of TEXT_MODELS){
       for(const think of [true,false]){
@@ -462,19 +465,20 @@ async function streamCall(system,userText,ui,onText,estLen,opts){
           clearTimeout(idle);
           if(opts.holder&&opts.holder.skipped)throw new Error("건너뜀");
           lastErr=e.name==='AbortError'?new Error(`[${model}] ${Math.round(idleMs/1000)}초 동안 응답이 끊겼어요`):e;
-          st.tries++;
+          errs.push(lastErr.message);st.tries++;
+          if(opts.stopOn429&&e.status===429){lastErr.all=errs;throw lastErr}
           if(think&&e.status===400&&/think/i.test(e.body||''))continue;
-          if(e.status===400||e.status===401||e.status===403)throw lastErr;
+          if(e.status===400||e.status===401||e.status===403){lastErr.all=errs;throw lastErr}
           break;
         }
       }
     }
-    throw lastErr;
+    lastErr.all=errs;throw lastErr;
   }finally{clearInterval(tick)}
 }
 function hint(m){
   if(/ 403/.test(m))return"키에 Gemini API 권한이 없거나 제한이 걸려 있을 수 있어요.";
-  if(/ 429/.test(m))return"사용 한도에 걸렸을 수 있어요. 잠시 후 다시 눌러 보세요.";
+  if(/ 429/.test(m))return"사용 한도에 걸렸거나, 이 기능(구글 검색 연결)에 결제 설정이 필요할 수 있어요. 잠시 후 다시 해 보시고, 계속되면 AI Studio에서 사용량·결제 상태를 확인하세요.";
   if(/ 400/.test(m))return"API 키가 올바른지 확인하세요.";
   if(/Failed to fetch|network/i.test(m))return"네트워크 문제이거나 화면이 꺼져 요청이 끊겼을 수 있어요.";
   return"";
@@ -496,6 +500,57 @@ function cleanReal(o){
   return r;
 }
 function skipSearch(){if(searchHolder){searchHolder.skipped=true;if(searchHolder.ctl)searchHolder.ctl.abort()}}
+let searchBlocked=false,lastRegion="";
+const REAL_SYS_PLAIN=`당신은 소개팅 연습 앱의 '캐릭터 설정' 담당입니다. 아래 페르소나에 어울리는 가상 인물 설정을 만드세요. 규칙: (1) 지금은 검색을 쓸 수 없으므로 실존하는 상호·곡명·가수·뉴스는 절대 넣지 마세요. (2) backstory에는 출신, 요즘 있었던 일 한 가지, 요즘의 즐거움이나 고민 한 가지를 3~4문장으로 구체적이되 실존 장소·곡 이름 없이 쓰세요. (3) 오직 JSON 객체 하나만 출력하세요: {"bio":"프로필 한 줄 소개(2문장 이내)","backstory":"","quirks":["",""]}`;
+function explainErr(msg){
+  if(/ 429/.test(msg))return"사용 한도 또는 결제 설정 문제로 거절됐어요";
+  if(/ 403/.test(msg))return"키에 이 기능 권한이 없어요";
+  if(/ 404/.test(msg))return"모델 이름을 찾지 못했어요";
+  if(/ 401/.test(msg))return"API 키가 올바르지 않아요";
+  if(/ 400/.test(msg))return"요청이 거절됐어요(키 또는 설정 문제)";
+  if(/건너뜀/.test(msg))return"건너뛰었어요";
+  return"검색에 실패했어요";
+}
+async function gatherReal(p,region,ui,allowSearch){
+  const out={real:null,sources:[],note:"",errs:[],searched:false};
+  const today=new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
+  const who=`[가상 인물 페르소나] 이름 ${p.name}, ${p.age}세, ${p.job}, 성향 ${p.tone}, 관심사 ${p.int}(${p.intD})`;
+  if(allowSearch){
+    try{
+      const body=`오늘 날짜: ${today}\n만남 지역: ${region} 일대\n상황: ${SCN[CFG.scn].label}\n${who}\n이 인물이 소개팅 상대와 처음 만나기에 어울리는, ${region} 일대의 실제 카페·식당 한 곳과, 이 인물의 취향에 맞는 실제 곡 2~3곡, 그리고 가벼운 대화 소재를 찾아 JSON으로 답하세요.`;
+      const srcs=[];
+      const txt=await streamCall(REAL_SYS,body,ui,()=>{},0,{
+        tools:[{google_search:{}}],maxTokens:3000,holder:searchHolder,stopOn429:true,
+        waitMsg:'🔎 실제 장소·곡·요즘 이야기를 검색하는 중...',workMsg:'🧩 찾은 정보를 정리하는 중...',
+        onMeta:g=>{(g.groundingChunks||[]).forEach(c=>{if(c.web&&c.web.uri&&!srcs.find(x=>x.uri===c.web.uri))srcs.push({uri:c.web.uri,title:c.web.title||'출처'})})}
+      });
+      out.real=cleanReal(parseJsonLoose(txt));out.sources=srcs;out.searched=true;
+      if(!out.real)out.note="실제 정보를 읽지 못해 일반 설정으로 진행해요.";
+      else if(!out.real.venue)out.note="확인된 실제 장소가 없어 장소 이름 없이 진행해요.";
+      return out;
+    }catch(e){
+      console.error(e);
+      out.errs=(e.all&&e.all.length)?e.all.slice():[e.message];
+      if(searchHolder.skipped){out.note="실제 정보 없이 진행해요.";out.skipped=true;return out}
+      if(/ 429| 403/.test(e.message))searchBlocked=true;
+      out.note=`실제 장소·곡 검색을 쓸 수 없어요 (${explainErr(e.message)}). `;
+    }
+  }else{
+    out.note=CFG.search===false?"설정에서 검색이 꺼져 있어 프로필 설정만 만들어요. ":"이번 접속에서는 검색이 막혀 있어 건너뛰어요('🔎 다시 검색'으로 재시도). ";
+  }
+  // 검색 없이 캐릭터 설정(소개·배경·말버릇)만 생성
+  try{
+    ui.ph.textContent='🧩 상대의 프로필 설정을 만드는 중...';
+    const txt=await streamCall(REAL_SYS_PLAIN,`${who}\n상황: ${SCN[CFG.scn].label}`,ui,()=>{},0,{maxTokens:2000,holder:searchHolder,waitMsg:'🧩 상대의 프로필 설정을 만드는 중...',workMsg:'🧩 설정을 정리하는 중...'});
+    out.real=cleanReal(parseJsonLoose(txt));
+    out.note+=out.real?"실제 장소·곡 없이 프로필 설정만 새로 만들어 진행해요.":"일반 설정으로 진행해요.";
+  }catch(e2){
+    if(/ 40[013]/.test(e2.message)&&!/ 429/.test(e2.message))throw e2;
+    if(!searchHolder.skipped)out.errs=out.errs.concat((e2.all&&e2.all.length)?e2.all:[e2.message]);
+    out.note+="일반 설정으로 진행해요.";
+  }
+  return out;
+}
 async function findMatch(){
   API=$('apiKey').value.trim();
   if(!API){$('setPanel').classList.remove('hide');setStatus("먼저 ⚙️ 설정에서 API 키를 입력해 주세요.","#fbbf24");return}
@@ -503,31 +558,30 @@ async function findMatch(){
   if(active)return;
   $('fbBox').classList.add('hide');$('hero0').classList.remove('hide');setStatus("");
   persona=makePersona();real=null;realSources=[];
-  const region=pick(HOODS);
+  const region=pick(HOODS);lastRegion=region;
   phase('search');
   searchHolder={skipped:false,ctl:null};
   const ui=progUI($('progSearch'));
-  let note="";
-  try{
-    const today=new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
-    const body=`오늘 날짜: ${today}\n만남 지역: ${region} 일대\n상황: ${SCN[CFG.scn].label}\n[가상 인물 페르소나] 이름 ${persona.name}, ${persona.age}세, ${persona.job}, 성향 ${persona.tone}, 관심사 ${persona.int}(${persona.intD})\n이 인물이 소개팅 상대와 처음 만나기에 어울리는, ${region} 일대의 실제 카페·식당 한 곳과, 이 인물의 취향에 맞는 실제 곡 2~3곡, 그리고 가벼운 대화 소재를 찾아 JSON으로 답하세요.`;
-    const srcs=[];
-    const txt=await streamCall(REAL_SYS,body,ui,()=>{},0,{
-      tools:[{google_search:{}}],maxTokens:3000,holder:searchHolder,
-      waitMsg:'🔎 실제 장소·곡·요즘 이야기를 검색하는 중...',workMsg:'🧩 찾은 정보를 정리하는 중...',
-      onMeta:g=>{(g.groundingChunks||[]).forEach(c=>{if(c.web&&c.web.uri&&!srcs.find(x=>x.uri===c.web.uri))srcs.push({uri:c.web.uri,title:c.web.title||'출처'})})}
-    });
-    real=cleanReal(parseJsonLoose(txt));realSources=srcs;
-    if(!real)note="실제 정보를 읽지 못해 일반 설정으로 진행해요.";
-    else if(!real.venue)note="확인된 실제 장소가 없어 장소 이름 없이 진행해요.";
-  }catch(e){
-    console.error(e);real=null;
-    note=searchHolder.skipped?"실제 정보 없이 진행해요.":("실제 정보 검색에 실패해 일반 설정으로 진행해요. ("+e.message.slice(0,80)+")");
-    if(/ 40[013]/.test(e.message)){phase('idle');setStatus(`API 오류: ${e.message.slice(0,120)} ${hint(e.message)}`,"#f87171");return}
-  }
+  let res;
+  try{res=await gatherReal(persona,region,ui,CFG.search!==false&&!searchBlocked)}
+  catch(e){phase('idle');setStatus(`API 오류: ${explainErr(e.message)} · ${e.message.slice(0,140)} ${hint(e.message)}`,"#f87171");return}
+  real=res.real;realSources=res.sources;
   if(real&&real.venue)persona.place=real.venue.name+(real.venue.area?` (${real.venue.area})`:'');
-  matchData={persona,real,sources:realSources,note,region};
-  renderMatch();phase('match');setStatus(note,"#fbbf24");
+  matchData={persona,real,sources:realSources,note:res.note,errs:res.errs,region};
+  renderMatch();phase('match');setStatus(res.note,"#fbbf24");
+}
+async function retrySearch(){
+  if(!matchData||active)return;
+  searchBlocked=false;
+  phase('search');searchHolder={skipped:false,ctl:null};
+  const ui=progUI($('progSearch'));
+  let res;
+  try{res=await gatherReal(persona,matchData.region||lastRegion,ui,true)}
+  catch(e){phase('match');setStatus(`API 오류: ${explainErr(e.message)} · ${e.message.slice(0,140)}`,"#f87171");return}
+  if(res.searched||!real){real=res.real;realSources=res.sources}
+  if(real&&real.venue)persona.place=real.venue.name+(real.venue.area?` (${real.venue.area})`:'');
+  matchData={persona,real,sources:realSources,note:res.note,errs:res.errs,region:matchData.region};
+  renderMatch();phase('match');setStatus(res.note,"#fbbf24");
 }
 function avatarEl(el,p){const[c1,c2]=avatarColors(p.name);el.textContent=p.name.slice(0,1)}
 function renderMatch(){
@@ -555,7 +609,10 @@ function renderMatch(){
     const i=mk('div',null,'info');i.appendChild(mk('h4','🔗 검색 출처 (직접 확인해 보세요)'));
     const w=mk('div');realSources.slice(0,5).forEach(s=>{const a=mk('a',s.title);a.href=s.uri;a.target='_blank';a.rel='noopener noreferrer';w.appendChild(a)});i.appendChild(w);
     i.appendChild(mk('div','AI 검색 결과라 영업 여부·메뉴가 틀릴 수 있어요. 장소·곡이 실제인지는 출처로 확인하세요.','warn'));b.appendChild(i);
-  }else if(!real){b.appendChild(mk('div','이번 상대는 실제 장소·곡 정보 없이 진행돼요.','warn'))}
+  }else if(!real&&!(matchData&&matchData.note)){b.appendChild(mk('div','이번 상대는 실제 장소·곡 정보 없이 진행돼요.','warn'))}
+  if(matchData&&matchData.note)b.appendChild(mk('div',matchData.note,'warn'));
+  if(matchData&&matchData.errs&&matchData.errs.length){const d=mk('details');d.appendChild(mk('summary','오류 자세히 보기 (문의할 때 복사해 주세요)'));d.appendChild(mk('pre',matchData.errs.join('\n\n')));b.appendChild(d)}
+  if(CFG.search!==false&&!(real&&real.venue)&&matchData&&matchData.region!==undefined){const rb=mk('button','🔎 실제 장소·곡 다시 검색','btn ghost');rb.onclick=retrySearch;b.appendChild(rb)}
   box.appendChild(b);
   $('memo2').value=$('memo').value;renderDrills();
 }
@@ -567,7 +624,7 @@ async function startCall(){
   if(!API){setStatus("API 키를 입력해 주세요.","#fbbf24");return}
   LS.set(NK,$('memo2').value);$('memo').value=$('memo2').value;
   voice=persona.voice;memoUsed=$('memo2').value.trim();
-  sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=true;everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
+  sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=(CFG.search!==false&&!searchBlocked);everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
   setStatus("마이크 연결 및 서버 접속 중...","#fbbf24");
   try{
     actx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
@@ -881,7 +938,7 @@ ${fmtLog(r.log).slice(-20000)}`;
     const h=hint(e.message);
     if(id===lastId){
       pb.classList.add('hide');view.innerHTML='';
-      view.appendChild(mk('pre',`피드백을 만들지 못했어요: ${e.message}${h?"\n→ "+h:""}\n\n대화는 저장되어 있어요. 아래 '피드백 다시 만들기'를 눌러 주세요.`));
+      view.appendChild(mk('pre',`피드백을 만들지 못했어요: ${(e.all&&e.all.length?e.all.join('\n'):e.message)}${h?"\n→ "+h:""}\n\n대화는 저장되어 있어요. 아래 '피드백 다시 만들기'를 눌러 주세요.`));
       $('retryBtn').classList.remove('hide');
     }
     setStatus("피드백 생성 실패 — 아래 버튼으로 다시 시도하세요","#f87171");
@@ -1130,6 +1187,8 @@ function initCfg(){
   $('profile').value=CFG.profile||'';$('sens').checked=!!CFG.sens;
   $('profile').addEventListener('input',()=>{CFG.profile=$('profile').value;LS.set(CK,CFG)});
   $('sens').addEventListener('change',()=>{CFG.sens=$('sens').checked;LS.set(CK,CFG)});
+  $('srch').checked=CFG.search!==false;
+  $('srch').addEventListener('change',()=>{CFG.search=$('srch').checked;if(CFG.search)searchBlocked=false;LS.set(CK,CFG)});
   $('durCustom').addEventListener('input',()=>{const v=Math.round(Number($('durCustom').value));if(v>=3&&v<=120){CFG.dur=v;LS.set(CK,CFG);refreshSegs()}});
   $('durCustom').addEventListener('change',()=>{let v=Math.round(Number($('durCustom').value));if(v>120)v=120;if(v>=3){CFG.dur=v;LS.set(CK,CFG);$('durCustom').value=v}else $('durCustom').value=DUR_PRE.some(a=>a[0]===CFG.dur)?'':CFG.dur;refreshSegs()});
 }
@@ -1165,7 +1224,7 @@ function importJson(inp){
 }
 
 window.onload=()=>{
-  const k=LS.get(KK,"");if(k)$('apiKey').value=k;
+  const k=FIXED_KEY||LS.get(KK,"");if(k)$('apiKey').value=k;
   else $('setPanel').classList.remove('hide');
   const m=LS.get(NK,"")||"";$('memo').value=m;$('memo2').value=m;
   initCfg();renderDrills();phase('idle');renderRecs();
