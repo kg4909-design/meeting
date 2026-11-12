@@ -110,6 +110,7 @@ svg text{fill:#a99bc0;font-size:9px}
 .reveal .row{display:flex;gap:8px;font-size:12px;line-height:1.6;margin-top:4px;color:#e0d4f5}.reveal .row b{flex:none;width:76px;color:var(--mu)}
 .stars{color:#fbbf24;letter-spacing:2px}
 .row2{display:flex;gap:8px}.row2 .btn{margin-top:10px;font-size:13px;padding:12px 6px}
+select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);background:var(--bg);color:#fff;font-size:14px}
 /* 하단 탭 */
 .nav{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;background:linear-gradient(180deg,transparent,var(--bg) 35%);padding:14px 16px calc(12px + env(safe-area-inset-bottom))}
 .navIn{width:100%;max-width:480px;display:flex;background:var(--sf);border-radius:22px;padding:6px;border:1px solid var(--ln)}
@@ -125,6 +126,12 @@ svg text{fill:#a99bc0;font-size:9px}
   <textarea id="profile" style="min-height:64px" placeholder="예: 35세, 초등학교 교사 겸 작가 …"></textarea>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="sens" style="width:auto"> 민감한 질문 연습 (결정사 모드에서 이전 관계·이별 사유를 한 번 물어봐요)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="srch" style="width:auto"> 실제 장소·곡 검색 사용 (끄면 검색 없이 프로필 설정만 AI가 만들어요)</label>
+  <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="ttsOn" style="width:auto"> 피드백이 나오면 음성으로 자동으로 읽어주기 (운전·걷기용)</label>
+  <label>읽는 범위</label><select id="ttsScope"><option value="sum">핵심 요약 (점수·잘한 점·아쉬운 점·고칠 점)</option><option value="full">전체 (Before/After, 호감 곡선, 속마음 포함)</option></select>
+  <label>읽는 속도</label><select id="ttsRate"><option value="0.9">조금 느리게</option><option value="1">보통</option><option value="1.15">조금 빠르게</option><option value="1.3">빠르게</option></select>
+  <label>읽어주는 목소리 (이 기기에 설치된 한국어 음성)</label><select id="ttsVoice"></select>
+  <button class="btn ghost" type="button" onclick="ttsPreview()">▶ 미리 듣기</button>
+  <div class="small" id="ttsNote"></div>
   <div class="small">상대의 목소리, 성격, 만날 지역(서울·인천·경기)은 매번 자동으로 정해져요. API 키·기록은 이 브라우저에만 저장되지만, 대화 내용과 위 프로필은 AI 처리를 위해 Google Gemini로 전송돼요. 민감한 개인정보는 필요한 만큼만 적으세요. 상대는 AI가 연기하는 가상 인물이며 실제 사람의 반응과 다를 수 있어요.</div>
 </div>
 
@@ -135,6 +142,7 @@ svg text{fill:#a99bc0;font-size:9px}
   <div id="fbBox" class="hide">
     <h2>이번 대화 피드백</h2>
     <div id="diagBox"></div>
+    <div id="ttsBar" class="hide"><button class="btn sub" id="ttsBtn" type="button" onclick="ttsToggle()">🔊 피드백 듣기</button></div>
     <div id="progBox" class="prog hide"></div>
     <div id="fbView"></div>
     <button class="btn pu hide" id="retryBtn" onclick="genFeedback(lastId)">피드백 다시 만들기</button>
@@ -560,6 +568,7 @@ async function findMatch(){
   if(!API){$('setPanel').classList.remove('hide');setStatus("먼저 ⚙️ 설정에서 API 키를 입력해 주세요.","#fbbf24");return}
   LS.set(KK,API);
   if(active)return;
+  ttsStop();
   $('fbBox').classList.add('hide');$('hero0').classList.remove('hide');setStatus("");
   persona=makePersona();real=null;realSources=[];
   const region=pick(HOODS);lastRegion=region;
@@ -624,6 +633,7 @@ function renderMatch(){
 /* ================= 통화 ================= */
 async function startCall(){
   if(!matchData)return;
+  ttsStop();ttsUnlock();
   API=$('apiKey').value.trim();
   if(!API){setStatus("API 키를 입력해 주세요.","#fbbf24");return}
   LS.set(NK,$('memo2').value);$('memo').value=$('memo2').value;
@@ -733,6 +743,7 @@ function saveRecord(){
 }
 function endSession(fromError,why,info){
   const id=sid,enough=userTurns(log)>=2;
+  const wantTts=enough&&CFG.tts!==false;
   info=info||{};endKind=why||(fromError?'error':'user');
   const at=callT0?Math.round((Date.now()-callT0)/1000):0;
   evLog('end',{kind:endKind});userEnded=true;
@@ -742,6 +753,7 @@ function endSession(fromError,why,info){
   {const recs=LS.get(RK,[]);const r=recs.find(x=>x.id===id);if(r){r.endInfo=endInfo;r.events=evts.slice();LS.set(RK,recs)}}
   cleanup(false);
   showDiag(id);
+  if(wantTts){lockScreen();ttsSay('대화가 끝났어요. 피드백을 만들고 있어요. 잠시만 기다려 주세요.',{quiet:true})}
   const codeTxt=endKind==='error'?`연결이 끊겨 대화가 종료됐어요 (코드 ${info.code}${info.reason?' - '+info.reason:''}). 아래 '연결 진단'을 확인하세요. `:'';
   if(enough){setStatus(codeTxt+(endKind==='error'?"피드백을 만드는 중...":"대화 종료. 피드백을 만드는 중... (화면을 켜 두세요)"),endKind==='error'?"#f87171":"#c4b5fd");genFeedback(id)}
   else setStatus(codeTxt+"대화가 너무 짧아 피드백은 만들지 않았어요.",endKind==='error'?"#f87171":"#7dd3fc");
@@ -960,7 +972,7 @@ async function genFeedback(id){
   jobs.add(id);
   const view=$('fbView'),pb=$('progBox');
   if($('diagBox').dataset.id!==String(id))$('diagBox').innerHTML='';
-  if(id===lastId){$('fbBox').classList.remove('hide');$('hero0').classList.add('hide');$('fbActions').classList.remove('hide');$('retryBtn').classList.add('hide');view.innerHTML=''}
+  if(id===lastId){$('ttsBar').classList.add('hide');$('fbBox').classList.remove('hide');$('hero0').classList.add('hide');$('fbActions').classList.remove('hide');$('retryBtn').classList.add('hide');view.innerHTML=''}
   const ui=id===lastId?progUI(pb):null;
   let ex=null;const paint=throttle(t=>{if(id===lastId)renderFeedback(view,t,ex)},400);
   try{
@@ -983,7 +995,7 @@ ${fmtLog(r.log).slice(-20000)}`;
     if(x){x.report=txt;x.reportOk=true;x.next=P.next;x.scores=P.scores;x.total=P.total;x.verdict=P.verdict;x.metrics=ex?ex.m:null;LS.set(RK,a)}
     const newest=a.length&&a[a.length-1].id===id;
     if(newest&&P.next&&!active){$('memo').value=P.next;$('memo2').value=P.next;LS.set(NK,P.next)}
-    if(id===lastId){pb.classList.add('hide');renderFeedback(view,txt,ex)}
+    if(id===lastId){pb.classList.add('hide');renderFeedback(view,txt,ex);TTS.cur={raw:txt,ex:ex};$('ttsBar').classList.remove('hide');ttsUpdateUI();if(CFG.tts!==false)ttsPlayCurrent()}
     setStatus(P.next?"피드백 완료 ✓ 개선점이 '오늘의 미션'에 저장됐어요. 다음 대화에 반영됩니다.":"피드백 완료 ✓ (개선점 항목을 찾지 못했어요. 미션 칸에 직접 적어 주세요)","#4ade80");
   }catch(e){
     console.error(e);
@@ -994,7 +1006,8 @@ ${fmtLog(r.log).slice(-20000)}`;
       $('retryBtn').classList.remove('hide');
     }
     setStatus("피드백 생성 실패 — 아래 버튼으로 다시 시도하세요","#f87171");
-  }finally{jobs.delete(id);renderRecs()}
+    if(CFG.tts!==false&&id===lastId)ttsSay('피드백을 만들지 못했어요. 화면을 확인해 주세요.',{quiet:true});
+  }finally{jobs.delete(id);renderRecs();releaseLockIfIdle()}
 }
 
 /* ================= 기록 ================= */
@@ -1016,7 +1029,7 @@ function renderRecs(){
       else body.appendChild(mk('pre',"(피드백 없음)"));
       if(!r.report&&userTurns(r.log)>=2){const b=mk('button','피드백 만들기','btn pu');b.onclick=()=>{lastId=r.id;showTab('meet');genFeedback(r.id)};body.appendChild(b)}
       const c=mk('details');c.appendChild(mk('summary','대화 내용 보기'));c.appendChild(mk('pre',fmtLog(r.log)||"(없음)"));body.appendChild(c);
-      if(r.endInfo)body.appendChild(diagCard(r));const dl=mk('button','이 기록 삭제','btn rd');dl.onclick=()=>{if(confirm("이 기록을 삭제할까요?")){LS.set(RK,LS.get(RK,[]).filter(z=>z.id!==r.id));renderRecs()}};body.appendChild(dl);
+      if(r.report){const tb=mk('button','🔊 이 피드백 듣기','btn sub');tb.onclick=()=>{TTS.cur={raw:r.report,ex:fbExtra(r)};ttsPlayCurrent()};body.appendChild(tb)}if(r.endInfo)body.appendChild(diagCard(r));const dl=mk('button','이 기록 삭제','btn rd');dl.onclick=()=>{if(confirm("이 기록을 삭제할까요?")){LS.set(RK,LS.get(RK,[]).filter(z=>z.id!==r.id));renderRecs()}};body.appendChild(dl);
     };
     d.addEventListener('toggle',()=>{if(d.open)draw()});
     if(open.has(String(r.id))){d.open=true;draw()}
@@ -1149,6 +1162,95 @@ async function genOverall(){
   }finally{jobs.delete('overall');$('ovBtn').disabled=false}
 }
 
+/* ================= 피드백 음성 읽기 (브라우저 내장 음성) ================= */
+const TTS={gen:0,on:false,cur:null};
+const hasTTS=()=>('speechSynthesis' in window)&&('SpeechSynthesisUtterance' in window);
+function ttsClean(t){
+  return (t||'').replace(/\*\*/g,'').replace(/▲/g,'올랐어요. ').replace(/▼/g,'내려갔어요. ').replace(/→/g,' 에서 ')
+    .replace(/[“”"\[\]]/g,'').replace(/\(AI 시뮬레이션 기준\)/g,'').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu,'').replace(/\s+/g,' ').trim();
+}
+function ttsChunks(text){
+  const parts=(text.match(/[^.!?。\n]+[.!?。]?/g)||[]).map(x=>x.trim()).filter(Boolean);
+  const out=[];let cur='';
+  parts.forEach(p=>{if(cur&&(cur+' '+p).length>110){out.push(cur);cur=p}else cur=cur?cur+' '+p:p});
+  if(cur)out.push(cur);
+  const fin=[];
+  out.forEach(c=>{if(c.length<=160)fin.push(c);else{let r=c;while(r.length>160){let k=r.lastIndexOf(' ',150);if(k<60)k=150;fin.push(r.slice(0,k));r=r.slice(k).trim()}if(r)fin.push(r)}});
+  return fin;
+}
+function koVoices(){try{return speechSynthesis.getVoices().filter(v=>/^ko/i.test(v.lang))}catch(e){return[]}}
+function pickVoice(){const vs=koVoices();if(!vs.length)return null;return vs.find(v=>v.name===CFG.ttsVoice)||vs.find(v=>v.default)||vs[0]}
+function ttsUpdateUI(){const b=$('ttsBtn');if(b)b.textContent=TTS.on?'⏹ 읽기 멈추기':'🔊 피드백 듣기'}
+function releaseLockIfIdle(){if(!active&&jobs.size===0&&!TTS.on)unlockScreen()}
+function ttsStop(){TTS.gen++;TTS.on=false;try{if(hasTTS())speechSynthesis.cancel()}catch(e){}ttsUpdateUI();releaseLockIfIdle()}
+function ttsSay(text,opts){
+  opts=opts||{};
+  if(!hasTTS()){if(!opts.quiet)setStatus("이 브라우저는 음성 읽기를 지원하지 않아요. 화면으로 확인해 주세요.","#fbbf24");return false}
+  const chunks=ttsChunks(text);if(!chunks.length)return false;
+  try{speechSynthesis.cancel()}catch(e){}
+  const gen=++TTS.gen;let i=0,started=false;
+  const rate=Number(CFG.ttsRate)||1;
+  const guard=setTimeout(()=>{if(gen===TTS.gen&&!started&&!opts.quiet)setStatus("읽는 소리가 시작되지 않았어요. 기기 음량과 한국어 음성 설치를 확인하거나 '🔊 피드백 듣기' 버튼을 눌러 보세요.","#fbbf24")},4000);
+  const done=()=>{TTS.on=false;ttsUpdateUI();clearTimeout(guard);releaseLockIfIdle();if(opts.onDone)opts.onDone()};
+  const next=()=>{
+    if(gen!==TTS.gen)return;
+    if(i>=chunks.length){done();return}
+    const u=new SpeechSynthesisUtterance(chunks[i++]);
+    u.lang='ko-KR';u.rate=rate;
+    const v=pickVoice();if(v){u.voice=v;u.lang=v.lang}
+    u.onstart=()=>{started=true;clearTimeout(guard)};
+    u.onend=next;
+    u.onerror=e=>{
+      if(gen!==TTS.gen)return;
+      if(e.error==='interrupted'||e.error==='canceled')return;
+      if(e.error==='not-allowed'){clearTimeout(guard);TTS.on=false;ttsUpdateUI();setStatus("자동 읽기가 브라우저에 막혔어요. '🔊 피드백 듣기' 버튼을 눌러 주세요.","#fbbf24");return}
+      next();
+    };
+    try{speechSynthesis.speak(u)}catch(err){done()}
+  };
+  TTS.on=true;ttsUpdateUI();next();return true;
+}
+function ttsUnlock(){try{if(!hasTTS())return;const u=new SpeechSynthesisUtterance(' ');u.volume=0;speechSynthesis.speak(u)}catch(e){}}
+function speechItems(body,budget){
+  const lines=(body||'').split('\n').map(l=>l.trim()).filter(l=>l&&!/^---+$/.test(l));
+  const out=[];let n=0;
+  for(const l of lines){
+    const t=ttsClean(l.replace(/^(?:[*\-•]|\d+[.)])\s+/,''));
+    if(!t)continue;
+    if(n+t.length>budget&&out.length)break;
+    out.push(/[.!?。]$/.test(t)?t:t+'.');n+=t.length;
+  }
+  return out.join(' ');
+}
+function buildSpeech(raw,ex,scope){
+  const P=parseReport(raw),full=scope==='full',b=full?900:380;
+  const S=['이번 대화 피드백이에요.'];
+  if(P.total!==null)S.push(`총점은 ${P.total}점${P.verdict?`, 애프터 판정은 ${P.verdict}입니다.`:'입니다.'}`);
+  if(ex&&ex.m&&ex.m.turns>=2){const m=ex.m;S.push(`습관어는 ${m.perMin!==null?`1분에 ${m.perMin}회`:`${m.fillTotal}회`}, 한 번에 말한 길이는 평균 ${m.avgLen}자였어요.`)}
+  if(P.secs.good)S.push('잘한 점이에요. '+speechItems(P.secs.good,b));
+  if(P.secs.bad)S.push('아쉬운 점이에요. '+speechItems(P.secs.bad,b));
+  if(full){
+    if(P.secs.ba)S.push('이렇게 말했다면 더 좋았을 거예요. '+speechItems(P.secs.ba,b));
+    if(P.secs.heart)S.push('호감이 오르내린 순간이에요. '+speechItems(P.secs.heart,b));
+    if(P.secs.inner)S.push('상대의 속마음이에요. '+speechItems(P.secs.inner,b));
+    if(P.secs.read)S.push('숨은 설정을 읽었는지 볼게요. '+speechItems(P.secs.read,b));
+  }
+  const imps=impList(P.next);
+  if(imps.length)S.push('다음 대화에서 고칠 점이에요. '+imps.slice(0,3).map((t,i)=>['첫째','둘째','셋째'][i]+', '+ttsClean(t)+'.').join(' '));
+  S.push('이상이에요.');
+  return S.join(' ');
+}
+function ttsPlayCurrent(){if(!TTS.cur)return false;return ttsSay(buildSpeech(TTS.cur.raw,TTS.cur.ex,CFG.ttsScope||'sum'))}
+function ttsToggle(){if(TTS.on)ttsStop();else ttsPlayCurrent()}
+function ttsPreview(){ttsSay('안녕하세요. 이렇게 피드백을 읽어드릴게요.',{quiet:false})}
+function ttsFillVoices(){
+  const sel=$('ttsVoice');if(!sel)return;
+  const vs=hasTTS()?koVoices():[];
+  sel.innerHTML='';const a=mk('option','자동 선택');a.value='';sel.appendChild(a);
+  vs.forEach(v=>{const o=mk('option',v.name);o.value=v.name;sel.appendChild(o)});
+  sel.value=CFG.ttsVoice||'';
+  $('ttsNote').textContent=!hasTTS()?'이 브라우저는 음성 읽기를 지원하지 않아요.':vs.length?`한국어 음성 ${vs.length}개를 찾았어요.`:'이 기기에서 한국어 음성을 찾지 못했어요. 기기 설정에서 한국어 음성(텍스트 음성 변환)을 설치해야 읽어줘요. 목록은 잠시 뒤 나타날 수도 있어요.';
+}
 const FILLERS=["되게","뭔가","사실","약간","그쵸","그냥"];
 function computeMetrics(logArr,dur){
   const U=(logArr||[]).filter(x=>x.r==='user').map(x=>x.t),A=(logArr||[]).filter(x=>x.r==='ai').map(x=>x.t);
@@ -1239,6 +1341,12 @@ function initCfg(){
   $('profile').value=CFG.profile||'';$('sens').checked=!!CFG.sens;
   $('profile').addEventListener('input',()=>{CFG.profile=$('profile').value;LS.set(CK,CFG)});
   $('sens').addEventListener('change',()=>{CFG.sens=$('sens').checked;LS.set(CK,CFG)});
+  $('ttsOn').checked=CFG.tts!==false;$('ttsScope').value=CFG.ttsScope||'sum';$('ttsRate').value=String(CFG.ttsRate||1);
+  $('ttsOn').addEventListener('change',()=>{CFG.tts=$('ttsOn').checked;LS.set(CK,CFG);if(!CFG.tts)ttsStop()});
+  $('ttsScope').addEventListener('change',()=>{CFG.ttsScope=$('ttsScope').value;LS.set(CK,CFG)});
+  $('ttsRate').addEventListener('change',()=>{CFG.ttsRate=Number($('ttsRate').value)||1;LS.set(CK,CFG)});
+  $('ttsVoice').addEventListener('change',()=>{CFG.ttsVoice=$('ttsVoice').value;LS.set(CK,CFG)});
+  ttsFillVoices();if(hasTTS())speechSynthesis.onvoiceschanged=ttsFillVoices;
   $('srch').checked=CFG.search!==false;
   $('srch').addEventListener('change',()=>{CFG.search=$('srch').checked;if(CFG.search)searchBlocked=false;LS.set(CK,CFG)});
   $('durCustom').addEventListener('input',()=>{const v=Math.round(Number($('durCustom').value));if(v>=3&&v<=120){CFG.dur=v;LS.set(CK,CFG);refreshSegs()}});
