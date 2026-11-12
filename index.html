@@ -180,6 +180,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="sens" style="width:auto"> 민감한 질문 연습 (결정사 모드에서 이전 관계·이별 사유를 한 번 물어봐요)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="srch" style="width:auto"> 실제 장소·곡 검색 사용 (끄면 검색 없이 프로필 설정만 AI가 만들어요)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="ttsOn" style="width:auto"> 피드백이 나오면 음성으로 자동으로 읽어주기 (운전·걷기용)</label>
+  <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="rbLink" style="width:auto"> 드릴 5문제를 끝내면 100일 리부트의 '대화 연습 1회'를 자동 체크</label>
   <label>읽는 범위</label><select id="ttsScope"><option value="sum">핵심 요약 (점수·잘한 점·아쉬운 점·고칠 점)</option><option value="full">전체 (Before/After, 호감 곡선, 속마음 포함)</option></select>
   <label>음성 방식</label><select id="ttsEngine"><option value="gemini">Gemini 음성 (화면이 꺼져도 이어서 재생 · API 사용량 소모)</option><option value="browser">기기 내장 음성 (무료 · 화면이 꺼지면 끊길 수 있음)</option></select>
   <label>읽는 속도</label><select id="ttsRate"><option value="0.9">조금 느리게</option><option value="1">보통</option><option value="1.15">조금 빠르게</option><option value="1.3">빠르게</option></select>
@@ -229,6 +230,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 
   <div id="stMatch" class="hide">
     <div class="match" id="matchCard"></div>
+    <div id="prepBox"></div>
     <div class="mission"><h4>🎯 오늘의 미션 (수정 가능)</h4><textarea id="memo2" placeholder="이번 대화에서 시도할 개선점"></textarea><div class="drills" id="drillBox2"></div></div>
     <button class="btn main" id="goBtn" onclick="startCall()">🎙 대화 시작</button>
     <button class="btn sub" onclick="findMatch()">🔄 다른 상대 만나기</button>
@@ -727,6 +729,7 @@ function renderMatch(){
   if(CFG.search!==false&&!(real&&real.venue)&&matchData&&matchData.region!==undefined){const rb=mk('button','🔎 실제 장소·곡 다시 검색','btn ghost');rb.onclick=retrySearch;b.appendChild(rb)}
   box.appendChild(b);
   $('memo2').value=$('memo').value;renderDrills();
+  try{renderPrep()}catch(e){}
 }
 
 /* ================= 통화 ================= */
@@ -738,6 +741,7 @@ async function startCall(){
   LS.set(NK,$('memo2').value);$('memo').value=$('memo2').value;
   voice=persona.voice;memoUsed=$('memo2').value.trim();
   sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=(CFG.search!==false&&!searchBlocked);everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
+  callStories=snapStories();{const w=drWeak(dget());callFocus=w?(DR_AX.find(a=>a[0]===w)||[])[1]||null:null}
   evts=[];callT0=Date.now();reconnects=0;endKind='user';lastHeard='';evLog('start',{search:useSearch,minutes:callTarget,voice:voice});
   setStatus("마이크 연결 및 서버 접속 중...","#fbbf24");
   try{
@@ -836,7 +840,7 @@ function fmtLog(a){return (a||[]).map(x=>(x.r==='user'?'건 님: ':'상대: ')+x
 function saveRecord(){
   if(!log.length&&!(endKind==='error'||reconnects>0))return;
   const recs=LS.get(RK,[]);let r=recs.find(x=>x.id===sid);
-  if(!r){r={id:sid,date:new Date().toLocaleString('ko-KR'),p:persona,voice:voice,memoUsed:memoUsed,reportOk:false,scn:callScn,target:callTarget,realFull:real,real:real?{venue:real.venue,music:real.music}:null};recs.push(r)}
+  if(!r){r={id:sid,date:new Date().toLocaleString('ko-KR'),p:persona,voice:voice,memoUsed:memoUsed,stories:callStories,focus:callFocus,reportOk:false,scn:callScn,target:callTarget,realFull:real,real:real?{venue:real.venue,music:real.music}:null};recs.push(r)}
   r.log=log.slice();r.dur=durNow();r.events=evts.slice();r.reconnects=reconnects;
   if(!LS.set(RK,recs))setStatus("⚠️ 저장 공간이 부족해요. 기록 탭에서 '기록 전체 복사'로 백업하세요.","#f87171");
 }
@@ -1057,6 +1061,10 @@ function revealCard(p,scn){
   return secCard('🔓 상대의 숨은 설정 (알아챘나요?)','read',b);
 }
 function renderFeedback(container,raw,ex,final){
+  renderFeedback0(container,raw,ex,final);
+  if(final&&ex&&ex.stories&&ex.stories.length){try{container.appendChild(storyUsageEl(ex.stories,ex.log))}catch(e){console.error(e)}}
+}
+function renderFeedback0(container,raw,ex,final){
   container.innerHTML='';
   if(final&&raw)container.appendChild(ttsButton(raw,ex));
   const P=parseReport(raw);
@@ -1120,10 +1128,12 @@ ${fmtLog(r.log).slice(-20000)}`;
     const P=parseReport(txt);
     const a=LS.get(RK,[]),x=a.find(z=>z.id===id);
     if(x){x.report=txt;x.reportOk=true;x.next=P.next;x.scores=P.scores;x.total=P.total;x.verdict=P.verdict;x.metrics=ex?ex.m:null;LS.set(RK,a)}
+    const dxAdded=liveToDrill(id,txt,r.log);
     const newest=a.length&&a[a.length-1].id===id;
     if(newest&&P.next&&!active){$('memo').value=P.next;$('memo2').value=P.next;LS.set(NK,P.next)}
     if(id===lastId){pb.classList.add('hide');renderFeedback(view,txt,ex,true);TTS.cur={raw:txt,ex:ex};ttsUpdateUI();if(CFG.tts!==false)ttsPlayCurrent()}
     setStatus(P.next?"피드백 완료 ✓ 개선점이 '오늘의 미션'에 저장됐어요. 다음 대화에 반영됩니다.":"피드백 완료 ✓ (개선점 항목을 찾지 못했어요. 미션 칸에 직접 적어 주세요)","#4ade80");
+    if(dxAdded)setStatus($('status').textContent+" 가장 아쉬웠던 발화는 내일 드릴 카드로 추가됐어요.","#4ade80");
   }catch(e){
     console.error(e);
     const h=hint(e.message);
@@ -1500,7 +1510,7 @@ function fbExtra(r){
   const m=r.metrics||computeMetrics(r.log,r.dur||0);
   const recs=LS.get(RK,[]);const i=recs.findIndex(x=>x.id===r.id);let prev=null;
   for(let k=i-1;k>=0;k--){if(recs[k].log&&userTurns(recs[k].log)>=2){prev=recs[k].metrics||computeMetrics(recs[k].log,recs[k].dur||0);break}}
-  return{m:m,prev:prev,p:r.p,scn:r.scn};
+  return{m:m,prev:prev,p:r.p,scn:r.scn,stories:r.stories||null,log:r.log};
 }
 function dayKey(ts){const d=new Date(ts);return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()}
 function practiceStats(recs){
@@ -1574,6 +1584,7 @@ function initCfg(){
   $('profile').addEventListener('input',()=>{CFG.profile=$('profile').value;LS.set(CK,CFG)});
   $('sens').addEventListener('change',()=>{CFG.sens=$('sens').checked;LS.set(CK,CFG)});
   $('ttsOn').checked=CFG.tts!==false;$('ttsScope').value=CFG.ttsScope||'sum';$('ttsRate').value=String(CFG.ttsRate||1);
+  $('rbLink').checked=CFG.rebootLink!==false;$('rbLink').addEventListener('change',()=>{CFG.rebootLink=$('rbLink').checked;LS.set(CK,CFG)});
   $('ttsOn').addEventListener('change',()=>{CFG.tts=$('ttsOn').checked;LS.set(CK,CFG);if(!CFG.tts)ttsStop()});
   $('ttsScope').addEventListener('change',()=>{CFG.ttsScope=$('ttsScope').value;LS.set(CK,CFG)});
   $('ttsEngine').value=CFG.ttsEngine||'gemini';$('ttsEngine').addEventListener('change',()=>{CFG.ttsEngine=$('ttsEngine').value;LS.set(CK,CFG)});
@@ -1715,6 +1726,7 @@ function drLocalB(text){
   return{s:s,ev:bits.join(' · ')+(sent>2?' (1~2문장이 이상적)':''),fill:fill,sent:sent,len:t.length};
 }
 function drCards(d){return CARDS}
+function drFind(id){return CARDS.find(c=>c.id===id)||((dget().dx||[]).find(c=>c.id===id))}
 function drBuildDay(d){
   const k=dKey();let day=d.days[k];
   if(day&&day.cards&&day.cards.length)return day;
@@ -1731,7 +1743,10 @@ function drBuildDay(d){
   sh(lv).forEach(c=>{if(chosen.length<5)add(c)});
   sh(low).forEach(c=>{if(chosen.length<5)add(c)});
   const out=sh(chosen).slice(0,5);
-  day={cards:out.map(c=>c.id),lv:L,weak:w,startedAt:0};
+  const answered=new Set(d.hist.map(h=>h.cid));
+  const extra=(d.dx||[]).filter(c=>c.due<=k&&!answered.has(c.id)).slice(0,2);
+  const merged=extra.concat(out.filter(c=>!extra.find(e=>e.id===c.id))).slice(0,5);
+  day={cards:merged.map(c=>c.id),lv:L,weak:w,startedAt:0,extra:extra.map(c=>c.id)};
   d.days[k]=day;dsave(d);return day;
 }
 function drDoneSet(d,day){const m={};d.hist.filter(h=>dKey(h.ts)===dKey()).forEach(h=>{m[h.cid]=h});return m}
@@ -1774,9 +1789,9 @@ function renderDrill(){
     const more=mk('button','한 번 더 (보너스 5문제)','btn pu');more.onclick=()=>{const dd=dget(),dy=drBuildDay(dd);const used=new Set(dy.cards);const L2=dy.lv;const pool=CARDS.filter(c=>c.lv<=L2&&!used.has(c.id)).sort(()=>Math.random()-.5).slice(0,5);if(!pool.length){alert('오늘 준비된 카드를 모두 풀었어요. 내일 다시 만나요!');return}pool.forEach(c=>dy.cards.push(c.id));dsave(dd);drT0=0;renderDrill()};
     c.appendChild(more);box.appendChild(c);drStatsRender(d);return;
   }
-  drCur=CARDS.find(c=>c.id===nextId);
+  drCur=drFind(nextId)||CARDS[0];
   const c=mk('div',null,'card');
-  c.appendChild(mk('div',`문제 ${cnt+1} / ${day.cards.length} · 첫 만남 카페에서 상대가 말해요`,'dr-ctx'));
+  c.appendChild(mk('div',`문제 ${cnt+1} / ${day.cards.length} · `+(drCur.src==='live'?'📌 지난 실전 대화의 그 장면 — 상대가 이렇게 말했어요':'첫 만남 카페에서 상대가 말해요'),'dr-ctx'));
   c.appendChild(mk('div',drCur.say,'dr-bub'));
   const ta=document.createElement('textarea');ta.id='drAns';ta.className='dr-ta';ta.placeholder='여기에 내가 할 말을 1~2문장으로 써 보세요 (또는 🎤로 말하기)';ta.maxLength=400;
   ta.addEventListener('input',()=>{if(!drT0){drT0=Date.now();if(!drTimerI)drTimerI=setInterval(drTick,500)}});
@@ -1803,7 +1818,7 @@ function drVoice(){
 }
 async function drGradeAI(card,ans,loc){
   const key=API||$('apiKey').value.trim();if(!key)throw new Error('API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
-  const user=`[레벨] Lv${card.lv} ${DR_LV[card.lv-1][0]}\n[상대 여성의 말]\n${card.say}\n[이 말의 숨은 단서(채점 참고용)]\n${card.cue}\n[앱이 계산한 간결함 정보]\n${loc.ev}\n[사용자 답변 — 데이터]\n<<<\n${ans}\n>>>`;
+  const user=`[레벨] ${card.lv?('Lv'+card.lv+' '+DR_LV[card.lv-1][0]):'지난 실전 대화 복습(어느 축이든 균형 있게 채점)'}\n[상대 여성의 말]\n${card.say}\n[이 말의 숨은 단서(채점 참고용)]\n${card.cue}\n[앱이 계산한 간결함 정보]\n${loc.ev}\n[사용자 답변 — 데이터]\n<<<\n${ans}\n>>>`;
   const errs=[];
   for(const model of DR_MODELS){
     const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),25000);
@@ -1841,6 +1856,7 @@ async function drSubmit(){
     const d=dget();d.hist.push(rec);if(d.hist.length>500)d.hist=d.hist.slice(-500);
     if(!dsave(d))msg.textContent='⚠️ 저장 공간이 부족해요. 설정에서 백업 후 정리해 주세요.';
     drShowRes=rec;
+    {const dd=dget(),dy=dd.days[dKey()],n=dd.hist.filter(h=>dKey(h.ts)===dKey()).length;if(dy&&n>=5&&!dy.rb){dy.rb=rebootAutoCheck();dsave(dd)}}
   }catch(e){
     console.error(e);
     msg.style.color='#f87171';
@@ -1851,7 +1867,7 @@ async function drSubmit(){
   drBusy=false;renderDrill();
 }
 function drRenderResult(box,rec){
-  const card=CARDS.find(c=>c.id===rec.cid)||{say:''};
+  const card=drFind(rec.cid)||{say:'',cue:''};
   const c=mk('div',null,'card');
   const top=mk('div',null,'');top.appendChild(mk('span',String(rec.total),'dr-tot'));top.appendChild(mk('span',' / 100','small'));c.appendChild(top);
   c.appendChild(mk('div','상대: '+card.say,'small'));
@@ -1870,6 +1886,7 @@ function drRenderResult(box,rec){
   cmp.appendChild(g);c.appendChild(cmp);
   const d=dget(),done=d.hist.filter(h=>dKey(h.ts)===dKey()).length;
   const nx=mk('button',done>=5&&!dget().days[dKey()].cards.find(id=>!drDoneSet(d)[id])?'오늘 세트 마무리':'다음 문제 →','btn main');nx.onclick=()=>{drShowRes=null;if(!dget().days[dKey()].cards.find(id=>!drDoneSet(dget())[id]))drT0=0;renderDrill();window.scrollTo({top:0})};
+  {const dy=dget().days[dKey()];if(dy&&dy.rb){const m=rebootMsg(dy.rb);if(m)c.appendChild(mk('div',m,'st-tip'))}}
   c.appendChild(nx);box.appendChild(c);
 }
 function drStatsRender(d){
@@ -2081,6 +2098,111 @@ function stPracticeStart(id,card){
     r.onend=()=>{if(!finished&&stRec===r){try{r.start()}catch(e){}}};
     try{r.start()}catch(e){tr.textContent='음성 인식을 시작하지 못했어요. 시간만 기록돼요.'}
   }else{manual=true;tr.textContent='이 브라우저는 음성 인식을 지원하지 않아요. 시간만 기록돼요.'}
+}
+
+/* ================= 3단계: 훈련 ↔ 실전 연결 ================= */
+const AX_TIP={f:"상대 말의 키워드 하나를 골라 '그건 어떻게…?'로 이어 묻기 (한 번에 질문은 1개)",e:"사실 얘기 전에 감정을 먼저 짚기: '~하셨겠어요', '~해서 마음이 쓰이셨구나'",s:"공감한 뒤 내 경험·감정을 1~2문장으로 연결하기 (길게 가로채지 않기)",u:"맞장구만 하지 말고 가벼운 내 생각이나 장난을 한 번 섞기",b:"한 번에 1~2문장, 습관어(되게·뭔가·사실·그러면·그쵸) 없이 말하기"};
+let callStories=[],callFocus=null,RB_ORIGIN='https://kg4909-design.github.io';
+function snapStories(){
+  try{const d=sget();return stPick(false).map(id=>d.items.find(x=>x.id===id)).filter(Boolean).map(it=>({id:it.id,hook:it.hook,beats:it.beats,stage:it.stage,raw:it.raw}))}catch(e){return[]}
+}
+function renderPrep(){
+  const box=$('prepBox');if(!box)return;box.innerHTML='';
+  // 집중 과제
+  const w=drWeak(dget());
+  const f=mk('div',null,'mission');f.appendChild(mk('h4','🎯 이번 판 집중 과제 (드릴에서 가장 약한 축)'));
+  if(w){
+    const nm=DR_AX.find(a=>a[0]===w)[1];
+    f.appendChild(mk('div',nm,'st-hook'));f.appendChild(mk('div',AX_TIP[w],'small'));
+    const b=mk('button','미션에 추가','btn sub');b.onclick=()=>{const t='[집중] '+nm+': '+AX_TIP[w];const cur=$('memo2').value.trim();if(!cur.includes('[집중]')){$('memo2').value=(cur?cur+'\n':'')+t;syncMemo('memo2','memo');b.textContent='추가했어요 ✓'}};f.appendChild(b);
+  }else f.appendChild(mk('div','🎯 드릴 탭에서 3문제 이상 풀면, 가장 약한 축이 여기에 집중 과제로 떠요.','small'));
+  box.appendChild(f);
+  // 오늘의 이야기 3개
+  const t=mk('div',null,'mission');t.appendChild(mk('h4','🌟 오늘 꺼내 볼 이야기 3개'));
+  const st=snapStories();
+  if(!st.length)t.appendChild(mk('div','이야기 탭에 이야기를 추가하면 여기에 오늘의 3개가 뜨고, 대화 후 피드백에서 꺼냈는지 확인해 줘요.','small'));
+  else{
+    st.forEach(it=>{const r=mk('div',null,'');r.style.marginTop='8px';r.appendChild(mk('span',ST_NAME(it.stage),'st-stage'));r.appendChild(mk('div',it.hook,'st-hook'));r.lastChild.style.fontSize='14px';r.appendChild(mk('div',it.beats.join(' · '),'small'));t.appendChild(r)});
+    const b=mk('button','다시 뽑기','btn sub');b.onclick=()=>{stPick(true);renderPrep()};t.appendChild(b);
+    t.appendChild(mk('div','대본이 아니라 뼈대예요. 자연스러운 순간에 한두 개만 꺼내 보세요.','small'));
+  }
+  box.appendChild(t);
+}
+const ST_STOP=new Set(['그리고','그런데','하지만','그래서','이야기','그때','정말','진짜','너무','조금','아주','그냥','좀','제가','저는']);
+function stKeys(it){
+  const src=((it.hook||'')+' '+(it.beats||[]).join(' ')).replace(/[^가-힣A-Za-z0-9 ]/g,' ');
+  const out=[];
+  src.split(/\s+/).forEach(w=>{
+    const stem=w.replace(/(에서|에게|으로|이랑|한테|까지|부터|은|는|이|가|을|를|에|의|도|로|과|와|랑|만)$/,'');
+    if(stem.length>=2&&!ST_STOP.has(stem)&&!out.includes(stem))out.push(stem);
+  });
+  return out;
+}
+function storyUsage(stories,log){
+  const ut=(log||[]).filter(l=>l.r==='user').map(l=>l.t).join(' ').replace(/\s+/g,' ');
+  return stories.map(it=>{
+    const keys=stKeys(it),hit=keys.filter(k=>ut.includes(k));
+    const state=hit.length>=2||(keys.length&&hit.length/keys.length>=0.4)?'used':(hit.length===1?'touch':'none');
+    return{it:it,hit:hit,state:state,n:keys.length};
+  });
+}
+function storyUsageEl(stories,log){
+  const u=storyUsage(stories,log),box=mk('div',null,'sec chk');
+  box.appendChild(mk('h3','🌟 준비한 이야기 3개, 꺼냈나요? (키워드 기준 추정)'));
+  u.forEach(x=>{
+    const lab=x.state==='used'?'✅ 꺼냈어요':(x.state==='touch'?'🔸 살짝 언급':'⬜ 안 꺼냈어요');
+    const r=mk('div',null,'');r.style.marginTop='8px';
+    r.appendChild(mk('div',lab+' · '+ST_NAME(x.it.stage),'st-chk'));r.firstChild.style.cssText='font-size:12px;font-weight:700;margin-bottom:2px';
+    r.appendChild(mk('div',x.it.hook,'small'));r.lastChild.style.marginTop='0';
+    if(x.hit.length)r.appendChild(mk('div','대화에서 잡힌 단어: '+x.hit.join(', '),'small'));
+    box.appendChild(r);
+  });
+  box.appendChild(mk('div','내 말과 이야기 훅·뼈대의 단어가 겹치는지 앱이 세어 본 추정치예요. 다른 표현으로 말했다면 놓칠 수 있어요.','small'));
+  return box;
+}
+function liveToDrill(id,txt,log){
+  try{
+    const P=parseReport(txt),sec=P.secs.ba||'';if(!sec)return false;
+    const qs=[];sec.replace(/["“]([^"”]{4,220})["”]/g,(m,a)=>{qs.push(a.trim());return m});
+    if(!qs.length)return false;
+    const before=qs[0],after=qs[1]||'';
+    const norm=s=>s.replace(/[^가-힣A-Za-z0-9]/g,'');
+    const nb=norm(before);if(nb.length<3)return false;
+    let bi=-1,best=0;
+    (log||[]).forEach((l,i)=>{if(l.r!=='user')return;const nt=norm(l.t);if(!nt)return;
+      let sc=0;if(nt.includes(nb)||nb.includes(nt))sc=1;else{const a=new Set(nb.match(/.{2}/g)||[]),b=nt.match(/.{2}/g)||[];if(a.size&&b.length){sc=b.filter(x=>a.has(x)).length/Math.max(a.size,b.length)}}
+      if(sc>best){best=sc;bi=i}});
+    if(bi<0||best<0.35)return false;
+    let say='';for(let i=bi-1;i>=0;i--){if(log[i].r==='ai'){say=log[i].t.trim();break}}
+    if(!say)return false;
+    const tm=new Date();tm.setDate(tm.getDate()+1);
+    const d=dget();d.dx=d.dx||[];const cid='X'+id;
+    if(d.dx.find(c=>c.id===cid))return true;
+    d.dx.push({id:cid,lv:0,ax:'u',src:'live',rec:id,say:say.slice(0,220),cue:'지난 실전 대화에서 내가 한 말: "'+before+'"'+(after?' → AI 제안: "'+after+'"':'')+' (이 장면을 다시 해 보는 카드예요)',due:dKey(tm.getTime())});
+    d.dx=d.dx.slice(-30);dsave(d);return true;
+  }catch(e){console.error(e);return false}
+}
+function rebootAutoCheck(){
+  try{
+    if(CFG.rebootLink===false)return{ok:false,why:'off'};
+    if(location.origin!==RB_ORIGIN)return{ok:false,why:'origin'};
+    const raw=localStorage.getItem('reboot100.v1');if(!raw)return{ok:false,why:'none'};
+    const o=JSON.parse(raw);if(!o||typeof o!=='object')return{ok:false,why:'bad'};
+    const hs=o.cfg&&Array.isArray(o.cfg.habits)?o.cfg.habits:null;
+    if(hs&&!hs.find(h=>h.id==='talk'))return{ok:false,why:'nohabit'};
+    const dt=new Date();if(dt.getHours()<4)dt.setDate(dt.getDate()-1);
+    const date=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+    o.days=o.days||{};const dd=Object.assign({},o.days[date]||{});dd.checks=Object.assign({},dd.checks||{});
+    if(dd.checks.talk)return{ok:true,already:true};
+    dd.checks.talk=true;if(hs)dd.hids=hs.map(h=>h.id);dd.updated=Date.now();
+    o.days[date]=dd;localStorage.setItem('reboot100.v1',JSON.stringify(o));return{ok:true};
+  }catch(e){return{ok:false,why:'err'}}
+}
+function rebootMsg(r){
+  if(!r)return'';
+  if(r.ok)return r.already?'✅ 100일 리부트의 오늘 "대화 연습 1회"는 이미 체크돼 있어요.':'✅ 100일 리부트의 "대화 연습 1회"를 체크했어요. (리부트 앱을 다시 열면 보여요)';
+  const m={off:'설정에서 리부트 자동 체크가 꺼져 있어요.',origin:'ℹ️ 리부트 자동 체크는 이 앱을 리부트와 같은 주소(kg4909-design.github.io)에서 열었을 때만 돼요.',none:'ℹ️ 리부트 앱 데이터를 찾지 못했어요. 리부트 앱을 한 번 열어 둔 뒤 다시 해 보세요.',bad:'리부트 데이터를 읽지 못했어요.',nohabit:'리부트에 "대화 연습"(talk) 습관이 없어요.',err:'리부트 체크에 실패했어요.'};
+  return m[r.why]||'';
 }
 
 window.onload=()=>{
