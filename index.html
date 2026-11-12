@@ -506,7 +506,7 @@ function progUI(box){
 }
 async function streamCall(system,userText,ui,onText,estLen,opts){
   opts=opts||{};
-  const st={t0:Date.now(),chars:0,last:0,model:opts.claude?CLAUDE_STREAM[0]:gModels(TEXT_MODELS)[0],tries:0,firstAt:0};
+  const st={t0:Date.now(),chars:0,last:0,model:opts.claude?(opts.cmodels||CLAUDE_STREAM)[0]:gModels(opts.models||TEXT_MODELS)[0],tries:0,firstAt:0};
   const tick=setInterval(()=>{
     if(!ui)return;
     const now=Date.now(),el=Math.floor((now-st.t0)/1000);
@@ -533,7 +533,7 @@ async function streamCall(system,userText,ui,onText,estLen,opts){
   },500);
   let lastErr=new Error("알 수 없는 오류");const errs=[];
   try{
-    const MODELS=opts.claude?CLAUDE_STREAM:gModels(TEXT_MODELS);
+    const MODELS=opts.claude?(opts.cmodels||CLAUDE_STREAM):gModels(opts.models||TEXT_MODELS);
     for(const model of MODELS.slice(0,opts.maxModels||MODELS.length)){
       for(const think of (opts.claude?[false]:[true,false])){
         st.model=model;st.chars=0;st.firstAt=0;
@@ -606,10 +606,15 @@ function parseJsonLoose(t){
   const a=t.indexOf('{'),b=t.lastIndexOf('}');if(a<0||b<=a)return null;
   try{return JSON.parse(t.slice(a,b+1))}catch(e){return null}
 }
+function josaEul(w){const c=(w||'').trim().slice(-1).charCodeAt(0);if(c>=0xAC00&&c<=0xD7A3)return((c-0xAC00)%28)?'을':'를';return'를'}
 function josaRo(w){const c=(w||'').trim().slice(-1).charCodeAt(0);if(c>=0xAC00&&c<=0xD7A3){const f=(c-0xAC00)%28;return(f===0||f===8)?'로':'으로'}return'로'}
 function localProfile(p){
-  const a=(p.int||'').split('·')[0],b=(p.tone||'').split('·')[0];
-  return{venue:null,music:[],buzz:[],bio:`${p.job}${josaRo(p.job)} 일하는 ${p.age}세. 관심사는 ${a}, 분위기는 ${b} 스타일이에요. 오늘 처음 만나는 자리가 조금 설레요.`,backstory:'',quirks:[]};
+  const toneBit={"외향적":"처음 보는 사람과도 금방 웃으며 말을 트는 편이에요","내향적":"처음엔 낯을 좀 가리지만 편해지면 말이 늘어요","침착":"차분하게 듣다가 핵심을 짚는 편이에요","유머":"분위기를 가볍게 풀려고 농담을 자주 해요","직설":"좋고 싫음을 솔직하게 말하는 편이에요","감성":"감정과 분위기를 섬세하게 읽는 편이에요","현실":"현실적이고 계획을 세워 움직이는 편이에요","시크":"겉으론 무심해 보여도 속은 따뜻한 편이에요","호기심":"궁금한 건 바로 물어보는 편이에요","털털":"꾸밈없이 편하게 대하는 편이에요"};
+  let tb='';for(const k in toneBit){if((p.tone||'').includes(k)){tb=toneBit[k];break}}
+  const hobby=(p.intD||'').split(/[,·]/).map(x=>x.trim()).filter(Boolean).slice(0,3).join(', ');
+  const bio=`${p.job}${josaRo(p.job)} 일하는 ${p.age}세 ${p.name}. ${tb||'차분하게 대화를 이어가는 편이에요'}. 쉬는 날엔 ${hobby||'집에서 쉬는 것'}${josaEul(hobby||'집에서 쉬는 것')} 좋아해요. 오늘 첫 만남이 조금 설레고 긴장돼요.`;
+  const quirks=['마음이 편해지면 "아 맞다"로 이야기를 꺼내요','어색할 땐 음료를 한 모금 마시며 잠깐 쉬어요'];
+  return{venue:null,music:[],buzz:[],bio:bio,backstory:'',quirks:quirks};
 }
 function cleanReal(o){
   if(!o||typeof o!=='object')return null;
@@ -621,7 +626,8 @@ function cleanReal(o){
   return r;
 }
 function skipSearch(){if(searchHolder){searchHolder.skipped=true;if(searchHolder.ctl)searchHolder.ctl.abort()}}
-let searchBlocked=false,lastRegion="";
+const PROFILE_MODELS=["gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.8-flash"];
+let searchBlocked=(()=>{try{return Date.now()-(LS.get('search_block_at',0)||0)<12*3600e3}catch(e){return false}})(),lastRegion="";
 const REAL_SYS_PLAIN=`당신은 소개팅 연습 앱의 '캐릭터 설정' 담당입니다. 아래 페르소나에 어울리는 가상 인물 설정을 만드세요. 규칙: (1) 지금은 검색을 쓸 수 없으므로 실존하는 상호·곡명·가수·뉴스는 절대 넣지 마세요. (2) backstory에는 출신, 요즘 있었던 일 한 가지, 요즘의 즐거움이나 고민 한 가지를 3~4문장으로 구체적이되 실존 장소·곡 이름 없이 쓰세요. (3) 오직 JSON 객체 하나만 출력하세요: {"bio":"프로필 한 줄 소개(2문장 이내)","backstory":"","quirks":["",""]}`;
 function explainErr(msg){
   if(/ 429/.test(msg))return"사용 한도 또는 결제 설정 문제로 거절됐어요";
@@ -653,16 +659,16 @@ async function gatherReal(p,region,ui,allowSearch){
       console.error(e);
       out.errs=(e.all&&e.all.length)?e.all.slice():[e.message];
       if(searchHolder.skipped){out.note="실제 정보 없이 진행해요.";out.skipped=true;return out}
-      if(/ 429| 403/.test(e.message))searchBlocked=true;
+      if(/ 429| 403/.test(e.message)){searchBlocked=true;LS.set('search_block_at',Date.now())}
       out.note=`실제 장소·곡 검색을 쓸 수 없어요 (${explainErr(e.message)}). `;
     }
   }else{
-    out.note=CFG.search===false?"설정에서 검색이 꺼져 있어 프로필 설정만 만들어요. ":"이번 접속에서는 검색이 막혀 있어 건너뛰어요('🔎 다시 검색'으로 재시도). ";
+    out.note=CFG.search===false?"설정에서 검색이 꺼져 있어 프로필 설정만 만들어요. ":"최근 검색이 한도·결제 문제로 거절돼 이번엔 건너뛰어요('🔎 다시 검색'으로 재시도, 12시간 뒤 자동 재시도). ";
   }
   // 검색 없이 캐릭터 설정(소개·배경·말버릇)만 생성
   try{
     ui.ph.textContent='🧩 상대의 프로필 설정을 만드는 중...';
-    const txt=await streamCall(REAL_SYS_PLAIN,`${who}\n상황: ${SCN[CFG.scn].label}`,ui,()=>{},0,{maxTokens:2000,holder:searchHolder,firstMs:20000,idleMs:15000,maxModels:2,waitMsg:'🧩 상대의 프로필 설정을 만드는 중...',workMsg:'🧩 설정을 정리하는 중...'});
+    const txt=await streamAI(REAL_SYS_PLAIN,`${who}\n상황: ${SCN[CFG.scn].label}`,ui,()=>{},0,{models:PROFILE_MODELS,cmodels:['claude-haiku-5-5','claude-sonnet-5-5'],maxTokens:2000,holder:searchHolder,firstMs:20000,idleMs:15000,maxModels:2,waitMsg:'🧩 상대의 프로필 설정을 만드는 중...',workMsg:'🧩 설정을 정리하는 중...'});
     out.real=cleanReal(parseJsonLoose(txt));
     if(!out.real){out.real=localProfile(p);out.note+="AI가 프로필을 주지 못해 기본 프로필로 진행해요."}
     else out.note+="실제 장소·곡 없이 프로필 설정만 새로 만들어 진행해요.";
@@ -670,7 +676,7 @@ async function gatherReal(p,region,ui,allowSearch){
     if(/ 40[013]/.test(e2.message)&&!/ 429/.test(e2.message))throw e2;
     if(!searchHolder.skipped)out.errs=out.errs.concat((e2.all&&e2.all.length)?e2.all:[e2.message]);
     out.real=localProfile(p);
-    out.note+="AI 응답이 늦거나 실패해 기본 프로필로 진행해요. (대기 시간을 줄였어요)";
+    out.note+=(/ 429/.test(out.errs.join(' '))?"Gemini 사용 한도에 걸려 기본 프로필로 진행해요. (무료 키는 모델별 하루 요청 수가 매우 적을 수 있어요 · 설정에 Claude 키를 넣으면 자동으로 이어서 만들어요)":"AI 응답이 늦거나 실패해 기본 프로필로 진행해요.");
   }
   return out;
 }
@@ -692,11 +698,11 @@ async function findMatch(){
   real=res.real;realSources=res.sources;
   if(real&&real.venue)persona.place=real.venue.name+(real.venue.area?` (${real.venue.area})`:'');
   matchData={persona,real,sources:realSources,note:res.note,errs:res.errs,region};
-  renderMatch();phase('match');setStatus(res.note,"#fbbf24");
+  renderMatch();phase('match');setStatus("");
 }
 async function retrySearch(){
   if(!matchData||active)return;
-  searchBlocked=false;
+  searchBlocked=false;LS.set('search_block_at',0);
   phase('search');searchHolder={skipped:false,ctl:null};
   const ui=progUI($('progSearch'));
   let res;
@@ -705,7 +711,7 @@ async function retrySearch(){
   if(res.searched||!real){real=res.real;realSources=res.sources}
   if(real&&real.venue)persona.place=real.venue.name+(real.venue.area?` (${real.venue.area})`:'');
   matchData={persona,real,sources:realSources,note:res.note,errs:res.errs,region:matchData.region};
-  renderMatch();phase('match');setStatus(res.note,"#fbbf24");
+  renderMatch();phase('match');setStatus("");
 }
 function avatarEl(el,p){const[c1,c2]=avatarColors(p.name);el.textContent=p.name.slice(0,1)}
 function renderMatch(){
@@ -1610,7 +1616,7 @@ function initCfg(){
   $('ttsVoice').addEventListener('change',()=>{CFG.ttsVoice=$('ttsVoice').value;LS.set(CK,CFG)});
   ttsFillVoices();if(hasTTS())speechSynthesis.onvoiceschanged=ttsFillVoices;
   $('srch').checked=CFG.search!==false;
-  $('srch').addEventListener('change',()=>{CFG.search=$('srch').checked;if(CFG.search)searchBlocked=false;LS.set(CK,CFG)});
+  $('srch').addEventListener('change',()=>{CFG.search=$('srch').checked;if(CFG.search){searchBlocked=false;LS.set('search_block_at',0)}LS.set(CK,CFG)});
   $('durCustom').addEventListener('input',()=>{const v=Math.round(Number($('durCustom').value));if(v>=3&&v<=120){CFG.dur=v;LS.set(CK,CFG);refreshSegs()}});
   $('durCustom').addEventListener('change',()=>{let v=Math.round(Number($('durCustom').value));if(v>120)v=120;if(v>=3){CFG.dur=v;LS.set(CK,CFG);$('durCustom').value=v}else $('durCustom').value=DUR_PRE.some(a=>a[0]===CFG.dur)?'':CFG.dur;refreshSegs()});
 }
@@ -2273,7 +2279,7 @@ async function streamAI(system,userText,ui,onText,estLen,opts){
   }
   if(brain==='gemini'||!hasC)return streamCall(system,userText,ui,onText,estLen,opts);
   try{
-    return await streamCall(system,userText,ui,onText,estLen,Object.assign({},opts,{maxModels:2,firstMs:30000,idleMs:25000}));
+    return await streamCall(system,userText,ui,onText,estLen,Object.assign({maxModels:2,firstMs:30000,idleMs:25000},opts));
   }catch(e){
     if(opts.holder&&opts.holder.skipped)throw e;
     if(/ 401| 403/.test(e.message)&&!/models?/i.test(e.message)){/* 키 문제도 Claude로 시도 */}
