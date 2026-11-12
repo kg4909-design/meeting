@@ -134,6 +134,7 @@ svg text{fill:#a99bc0;font-size:9px}
 
   <div id="fbBox" class="hide">
     <h2>이번 대화 피드백</h2>
+    <div id="diagBox"></div>
     <div id="progBox" class="prog hide"></div>
     <div id="fbView"></div>
     <button class="btn pu hide" id="retryBtn" onclick="genFeedback(lastId)">피드백 다시 만들기</button>
@@ -365,6 +366,9 @@ let useSearch=true,everReady=false,searchHolder=null;
 let wl=null,uiInt=null,lastRms=0,wrapSent=false,endingSoon=false,callScn="match",callTarget=0;
 const WRAP_CUE="[시스템 큐] 헤어질 시간이 가까워졌습니다. 앞으로 2~3턴 안에 오늘 만남이 어땠는지, 다음에 또 만나고 싶은지 등을 자연스럽게 나누며 마무리 분위기로 이끌고, 건 님이 마무리 인사를 하면 따뜻하게 받아 주세요.";
 const durNow=()=>tStart?Math.floor((Date.now()-tStart)/1000):0;
+let evts=[],callT0=0,reconnects=0,endKind='user',lastHeard='';
+function ev_close(c){evLog('ws-close',{code:c.code,reason:(c.reason||'').slice(0,200),clean:c.wasClean,handle:!!handle,retries:retries,everReady:everReady})}
+function evLog(e,x){evts.push(Object.assign({t:callT0?Math.round((Date.now()-callT0)/1000):0,e:e},x||{}));if(evts.length>80)evts.shift()}
 const jobs=new Set();
 const userTurns=a=>(a||[]).filter(x=>x.r==='user').length;
 function setStatus(t,c){const e=$('status');e.textContent=t||"";e.style.color=c||"#7dd3fc"}
@@ -625,6 +629,7 @@ async function startCall(){
   LS.set(NK,$('memo2').value);$('memo').value=$('memo2').value;
   voice=persona.voice;memoUsed=$('memo2').value.trim();
   sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=(CFG.search!==false&&!searchBlocked);everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
+  evts=[];callT0=Date.now();reconnects=0;endKind='user';lastHeard='';evLog('start',{search:useSearch,minutes:callTarget,voice:voice});
   setStatus("마이크 연결 및 서버 접속 중...","#fbbf24");
   try{
     actx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000});
@@ -649,7 +654,7 @@ function startTimer(){
       $('callTimer').textContent=left>=0?fmtT(left):'+'+fmtT(-left);
       $('callTimerLbl').textContent=left>=0?'남은 시간':'마무리 중';
       if(!wrapSent&&left<=Math.min(90,Math.floor(callTarget*60*0.4))){wrapSent=true;send(WRAP_CUE)}
-      if(left<=-60&&active&&!userEnded){setStatus("정해 둔 시간이 끝나 대화를 마칩니다...","#fbbf24");endSession()}
+      if(left<=-60&&active&&!userEnded){setStatus("정해 둔 시간이 끝나 대화를 마칩니다...","#fbbf24");endSession(false,'timer')}
     }else{$('callTimer').textContent=fmtT(el);$('callTimerLbl').textContent='경과 시간'}
   },1000);
 }
@@ -682,13 +687,14 @@ function openSocket(resume){
   ws.onmessage=async ev=>{
     let m;try{m=JSON.parse(ev.data instanceof Blob?await ev.data.text():ev.data)}catch(e){return}
     if(m.setupComplete){
-      ready=true;retries=0;everReady=true;
+      ready=true;retries=0;everReady=true;evLog('setup-ok',{resume:!!resume});
       if(!proc)startMic();
       if(!resume){
         startTimer();setStatus(useSearch?"연결됨 · 실시간 검색 사용 가능":"연결됨 · 실시간 검색 없이 진행","#4ade80");
         send("[시스템 큐] 소개팅 시작. 약속 장소에서 건 님을 처음 만난 상황입니다. 오프닝 규칙대로 먼저 이름을 밝히며 인사하세요.");
       }else setStatus("재연결 완료. 대화를 이어가세요.","#4ade80");
     }
+    if(m.goAway)evLog('goaway',{timeLeft:(m.goAway.timeLeft!==undefined?m.goAway.timeLeft:'')});
     if(m.sessionResumptionUpdate&&m.sessionResumptionUpdate.resumable&&m.sessionResumptionUpdate.newHandle)handle=m.sessionResumptionUpdate.newHandle;
     const s=m.serverContent;if(!s)return;
     if(s.modelTurn&&s.modelTurn.parts)for(const p of s.modelTurn.parts)if(p.inlineData&&(p.inlineData.mimeType||"").startsWith("audio/pcm"))play(p.inlineData.data);
@@ -696,8 +702,8 @@ function openSocket(resume){
       addLog('user',s.inputTranscription.text);
       const lu=log[log.length-1];
       if(lu&&lu.r==='user'&&!endingSoon&&/(대화|통화)\s*(종료|끝낼게|끝내)|여기까지\s*(할게|하겠|해요)/.test(lu.t)){
-        endingSoon=true;setStatus("음성 명령을 들었어요. 대화를 종료합니다...","#fbbf24");
-        setTimeout(()=>{if(active&&!userEnded)endSession()},1500);
+        endingSoon=true;lastHeard=lu.t.slice(-40);evLog('voice-cmd',{heard:lastHeard});setStatus("음성 명령을 들었어요. 대화를 종료합니다...","#fbbf24");
+        setTimeout(()=>{if(active&&!userEnded)endSession(false,'voice')},1500);
       }
     }
     if(s.outputTranscription&&s.outputTranscription.text)addLog('ai',s.outputTranscription.text);
@@ -707,11 +713,11 @@ function openSocket(resume){
   ws.onclose=ev=>{
     ready=false;console.warn("close",ev.code,ev.reason);
     if(userEnded||!active)return;
+    ev_close(ev);
     // 검색 도구 때문에 설정 단계에서 거절당한 경우: 도구 없이 한 번 더 시도
     if(!everReady&&useSearch){useSearch=false;setStatus(`실시간 검색 도구를 쓸 수 없어 검색 없이 다시 연결해요 (코드 ${ev.code})`,"#fbbf24");setTimeout(()=>{if(active&&!userEnded)openSocket(false)},400);return}
-    if(handle&&retries<5){retries++;setStatus(`연결이 끊겨 재연결 중... (${retries}/5)`,"#fbbf24");setTimeout(()=>{if(active&&!userEnded)openSocket(true)},600);return}
-    setStatus(`연결이 끊겼어요 (코드 ${ev.code})${ev.reason?" - "+ev.reason:""}. 지금까지의 대화로 피드백을 만듭니다.`,"#f87171");
-    endSession(true);
+    if(handle&&retries<5){retries++;reconnects++;evLog('reconnect',{n:retries});setStatus(`연결이 끊겨 재연결 중... (${retries}/5)`,"#fbbf24");setTimeout(()=>{if(active&&!userEnded)openSocket(true)},600);return}
+    endSession(true,'error',{code:ev.code,reason:ev.reason||''});
   };
 }
 function send(t){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({realtimeInput:{text:t}}))}
@@ -719,17 +725,62 @@ function addLog(r,t){const l=log[log.length-1];if(l&&l.r===r)l.t+=t;else log.pus
 function fmtLog(a){return (a||[]).map(x=>(x.r==='user'?'건 님: ':'상대: ')+x.t).join('\n')}
 
 function saveRecord(){
-  if(!log.length)return;
+  if(!log.length&&!(endKind==='error'||reconnects>0))return;
   const recs=LS.get(RK,[]);let r=recs.find(x=>x.id===sid);
   if(!r){r={id:sid,date:new Date().toLocaleString('ko-KR'),p:persona,voice:voice,memoUsed:memoUsed,reportOk:false,scn:callScn,target:callTarget,realFull:real,real:real?{venue:real.venue,music:real.music}:null};recs.push(r)}
-  r.log=log.slice();r.dur=durNow();
+  r.log=log.slice();r.dur=durNow();r.events=evts.slice();r.reconnects=reconnects;
   if(!LS.set(RK,recs))setStatus("⚠️ 저장 공간이 부족해요. 기록 탭에서 '기록 전체 복사'로 백업하세요.","#f87171");
 }
-function endSession(fromError){
+function endSession(fromError,why,info){
   const id=sid,enough=userTurns(log)>=2;
-  userEnded=true;saveRecord();cleanup(false);
-  if(enough){setStatus(fromError?"피드백을 만드는 중...":"대화 종료. 피드백을 만드는 중... (화면을 켜 두세요)","#c4b5fd");genFeedback(id)}
-  else setStatus("대화가 너무 짧아 피드백은 만들지 않았어요.");
+  info=info||{};endKind=why||(fromError?'error':'user');
+  const at=callT0?Math.round((Date.now()-callT0)/1000):0;
+  evLog('end',{kind:endKind});userEnded=true;
+  const endInfo={kind:endKind,at:at,code:info.code,reason:info.reason,search:useSearch,reconnects:reconnects,turns:userTurns(log),hadHandle:!!handle};
+  if(endKind==='voice')endInfo.heard=lastHeard;
+  saveRecord();
+  {const recs=LS.get(RK,[]);const r=recs.find(x=>x.id===id);if(r){r.endInfo=endInfo;r.events=evts.slice();LS.set(RK,recs)}}
+  cleanup(false);
+  showDiag(id);
+  const codeTxt=endKind==='error'?`연결이 끊겨 대화가 종료됐어요 (코드 ${info.code}${info.reason?' - '+info.reason:''}). 아래 '연결 진단'을 확인하세요. `:'';
+  if(enough){setStatus(codeTxt+(endKind==='error'?"피드백을 만드는 중...":"대화 종료. 피드백을 만드는 중... (화면을 켜 두세요)"),endKind==='error'?"#f87171":"#c4b5fd");genFeedback(id)}
+  else setStatus(codeTxt+"대화가 너무 짧아 피드백은 만들지 않았어요.",endKind==='error'?"#f87171":"#7dd3fc");
+}
+const WS_CODES={1000:"정상 종료",1001:"상대(서버)가 떠남",1006:"비정상 종료(닫힘 신호 없이 끊김: 네트워크·서버 쪽 끊김 등)",1007:"잘못된 데이터 형식(모델 이름·키 형식 등)",1008:"정책 위반(권한·결제·모델 접근 문제 등)",1009:"메시지가 너무 큼",1011:"서버 내부 오류",1012:"서버 재시작",1013:"일시적 과부하"};
+function diagCard(r){
+  const ei=r.endInfo||{};const b=mk('div',null,'reveal');
+  const row=(k,v)=>{const x=mk('div',null,'row');x.appendChild(mk('b',k));x.appendChild(mk('span',v));b.appendChild(x)};
+  row('종료 원인',({user:'직접 종료(버튼)',timer:'정해 둔 시간이 끝나 자동 종료(설계대로)',voice:'음성 명령으로 종료',error:'연결이 끊겨 종료'})[ei.kind]||'기록 없음');
+  if(typeof ei.at==='number')row('경과 시간',fmtT(ei.at)+` (${ei.at}초)`);
+  if(ei.kind==='voice'&&ei.heard)row('인식된 말',`"${ei.heard}" — 평소 대화 중에 나온 말이었다면 오인식이니 알려 주세요`);
+  if(ei.kind==='error'){
+    row('끊긴 코드',(ei.code!==undefined?ei.code:'없음')+(WS_CODES[ei.code]?` · ${WS_CODES[ei.code]}`:''));
+    row('서버가 준 이유',ei.reason||'(없음)');
+    row('이어 붙이기',`재연결 ${ei.reconnects||0}회 시도 · 재개 값 ${ei.hadHandle?'있었음':'없었음'}`);
+    const h=[];
+    if(ei.at>=540&&ei.at<=660)h.push('약 10분 근처예요. 공식 문서의 연결 수명(약 10분)과 가까워요.');
+    if(ei.at>=840&&ei.at<=960)h.push('약 15분 근처예요. 공식 문서의 오디오 세션 제한(15분)과 가까워요.');
+    if(!ei.hadHandle)h.push('재개 값이 없어서 이어 붙이지 못했을 수 있어요.');
+    if(ei.search)h.push('이 대화는 실시간 검색 도구를 켠 채로 진행됐어요. 검색 때문인지 보려면 설정에서 검색을 끄고 비교해 보세요.');
+    if(ei.at<30)h.push('30초 안에 끊겼어요. 키·모델·권한 문제일 가능성이 있어요(서버 이유 문구를 확인).');
+    if(h.length)row('참고',h.join(' '));
+  }else row('재연결',`${ei.reconnects||0}회`);
+  row('검색 도구',ei.search?'켜짐':'꺼짐');
+  const evs=r.events||[];
+  const d=mk('details');d.appendChild(mk('summary',`연결 기록 보기 (${evs.length}건)`));
+  d.appendChild(mk('pre',evs.map(e=>fmtT(e.t)+' '+e.e+Object.keys(e).filter(k=>k!=='t'&&k!=='e').map(k=>' '+k+'='+e[k]).join('')).join('\n')||'(없음)'));
+  const w=mk('div');w.appendChild(b);w.appendChild(d);
+  w.appendChild(mk('div','코드 의미는 웹소켓 표준 기준이고 원인은 시간·코드로 추정한 것이라 확정은 아니에요. 문의할 때 이 카드 내용을 같이 알려 주세요.','small'));
+  return secCard('🔌 연결 진단','read',w);
+}
+function showDiag(id){
+  const recs=LS.get(RK,[]);const r=recs.find(x=>x.id===id);const box=$('diagBox');box.innerHTML='';box.dataset.id=String(id);
+  if(!r||!r.endInfo)return;
+  const ei=r.endInfo;
+  if(!(ei.kind==='error'||ei.reconnects>0||ei.turns<2||ei.kind==='voice'))return;
+  $('fbBox').classList.remove('hide');$('hero0').classList.add('hide');$('fbActions').classList.remove('hide');
+  $('fbView').innerHTML='';$('progBox').classList.add('hide');$('retryBtn').classList.add('hide');
+  box.appendChild(diagCard(r));
 }
 function cleanup(backToMatch){
   active=false;ready=false;stopPlay();clearInterval(tInt);clearInterval(uiInt);unlockScreen();lastRms=0;
@@ -908,6 +959,7 @@ async function genFeedback(id){
   if(jobs.has(id))return;
   jobs.add(id);
   const view=$('fbView'),pb=$('progBox');
+  if($('diagBox').dataset.id!==String(id))$('diagBox').innerHTML='';
   if(id===lastId){$('fbBox').classList.remove('hide');$('hero0').classList.add('hide');$('fbActions').classList.remove('hide');$('retryBtn').classList.add('hide');view.innerHTML=''}
   const ui=id===lastId?progUI(pb):null;
   let ex=null;const paint=throttle(t=>{if(id===lastId)renderFeedback(view,t,ex)},400);
@@ -964,7 +1016,7 @@ function renderRecs(){
       else body.appendChild(mk('pre',"(피드백 없음)"));
       if(!r.report&&userTurns(r.log)>=2){const b=mk('button','피드백 만들기','btn pu');b.onclick=()=>{lastId=r.id;showTab('meet');genFeedback(r.id)};body.appendChild(b)}
       const c=mk('details');c.appendChild(mk('summary','대화 내용 보기'));c.appendChild(mk('pre',fmtLog(r.log)||"(없음)"));body.appendChild(c);
-      const dl=mk('button','이 기록 삭제','btn rd');dl.onclick=()=>{if(confirm("이 기록을 삭제할까요?")){LS.set(RK,LS.get(RK,[]).filter(z=>z.id!==r.id));renderRecs()}};body.appendChild(dl);
+      if(r.endInfo)body.appendChild(diagCard(r));const dl=mk('button','이 기록 삭제','btn rd');dl.onclick=()=>{if(confirm("이 기록을 삭제할까요?")){LS.set(RK,LS.get(RK,[]).filter(z=>z.id!==r.id));renderRecs()}};body.appendChild(dl);
     };
     d.addEventListener('toggle',()=>{if(d.open)draw()});
     if(open.has(String(r.id))){d.open=true;draw()}
@@ -972,7 +1024,7 @@ function renderRecs(){
   });
 }
 function copyAll(){
-  const t=LS.get(RK,[]).map(r=>`===== ${r.date} | ${r.p.name}(${r.p.age}) ${r.p.job} =====\n[피드백]\n${r.report||"(없음)"}\n\n[다음 대화 개선점]\n${r.next||"(없음)"}\n\n[대화]\n${fmtLog(r.log)}\n`).join('\n');
+  const t=LS.get(RK,[]).map(r=>`===== ${r.date} | ${r.p.name}(${r.p.age}) ${r.p.job} =====\n${r.endInfo?`[종료] ${r.endInfo.kind} 코드${r.endInfo.code===undefined?'-':r.endInfo.code} ${r.endInfo.reason||''} ${r.endInfo.at}초 재연결${r.endInfo.reconnects}회\n`:''}[피드백]\n${r.report||"(없음)"}\n\n[다음 대화 개선점]\n${r.next||"(없음)"}\n\n[대화]\n${fmtLog(r.log)}\n`).join('\n');
   if(!t){alert("기록이 없습니다.");return}
   navigator.clipboard.writeText(t).then(()=>alert("복사했어요. 메모장 등에 붙여넣어 보관하세요."),()=>alert("복사에 실패했어요."));
 }
