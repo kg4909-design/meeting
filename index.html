@@ -175,6 +175,11 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 <div class="top"><div class="logo">💗 첫만남</div><button class="gear" onclick="$('setPanel').classList.toggle('hide')" aria-label="설정">⚙️</button></div>
 <div id="setPanel" class="panel hide">
   <label>Google AI Studio API Key</label><input type="password" id="apiKey" placeholder="키를 붙여넣으세요">
+  <label>Claude API Key (선택 · 피드백·채점·이야기 다듬기용)</label><input type="password" id="claudeKey" placeholder="sk-ant-... (없어도 돼요)">
+  <label>AI 두뇌 (피드백·채점·이야기 다듬기)</label><select id="brain"><option value="auto">자동: Gemini 먼저, 막히면 Claude</option><option value="gemini">Gemini만</option><option value="claude">Claude만</option></select>
+  <div class="small">실시간 음성 대화(상대 목소리)는 Gemini만 가능해요. Claude 키는 이 폰에만 저장되고 백업 파일에는 들어가지 않아요.</div>
+  <button class="btn ghost" type="button" id="chkBtn" onclick="connCheck()">🔧 연결 점검 (모델·속도·실시간)</button>
+  <pre id="chkOut" hidden style="white-space:pre-wrap;font-size:11px;line-height:1.6;background:var(--bg);border-radius:10px;padding:10px;margin-top:8px;color:#d9cfee"></pre>
   <label>상대가 알고 있는 내 정보 (프로필)</label>
   <textarea id="profile" style="min-height:64px" placeholder="예: 35세, 초등학교 교사 겸 작가 …"></textarea>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="sens" style="width:auto"> 민감한 질문 연습 (결정사 모드에서 이전 관계·이별 사유를 한 번 물어봐요)</label>
@@ -312,7 +317,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 const FIXED_KEY="";
 const $=id=>document.getElementById(id);
 const MODEL="models/gemini-3.8-live";
-const TEXT_MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash"];
+const TEXT_MODELS=["gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite"];
 const RK="dating_records_v2",KK="gemini_api_key",NK="sim_memo_v1",OK="sim_overall_v1";
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
 const pick=a=>a[Math.floor(Math.random()*a.length)];
@@ -501,7 +506,7 @@ function progUI(box){
 }
 async function streamCall(system,userText,ui,onText,estLen,opts){
   opts=opts||{};
-  const st={t0:Date.now(),chars:0,last:0,model:TEXT_MODELS[0],tries:0,firstAt:0};
+  const st={t0:Date.now(),chars:0,last:0,model:opts.claude?CLAUDE_STREAM[0]:gModels(TEXT_MODELS)[0],tries:0,firstAt:0};
   const tick=setInterval(()=>{
     if(!ui)return;
     const now=Date.now(),el=Math.floor((now-st.t0)/1000);
@@ -528,22 +533,26 @@ async function streamCall(system,userText,ui,onText,estLen,opts){
   },500);
   let lastErr=new Error("알 수 없는 오류");const errs=[];
   try{
-    for(const model of TEXT_MODELS.slice(0,opts.maxModels||TEXT_MODELS.length)){
-      for(const think of [true,false]){
+    const MODELS=opts.claude?CLAUDE_STREAM:gModels(TEXT_MODELS);
+    for(const model of MODELS.slice(0,opts.maxModels||MODELS.length)){
+      for(const think of (opts.claude?[false]:[true,false])){
         st.model=model;st.chars=0;st.firstAt=0;
         const ctl=new AbortController();if(opts.holder){opts.holder.ctl=ctl}
         let idle=null,idleMs=0;
         const arm=ms=>{clearTimeout(idle);idleMs=ms;idle=setTimeout(()=>ctl.abort(),ms)};
         try{
           arm(opts.firstMs||90000);
+          let res;
+          if(opts.claude){res=await claudeFetch(model,system,userText,opts.maxTokens||9000,ctl.signal,true)}else{
           const gc={maxOutputTokens:opts.maxTokens||9000};if(think)gc.thinkingConfig={thinkingLevel:"low"};
           const reqBody={system_instruction:{parts:[{text:system}]},contents:[{parts:[{text:userText}]}],generationConfig:gc};
           if(opts.tools)reqBody.tools=opts.tools;
-          const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{
+          res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{
             method:'POST',signal:ctl.signal,
             headers:{'Content-Type':'application/json','x-goog-api-key':API||$('apiKey').value.trim()},
             body:JSON.stringify(reqBody)
           });
+          }
           if(!res.ok){const t=await res.text();const e=new Error(`[${model}] HTTP ${res.status} ${t.slice(0,200)}`);e.status=res.status;e.body=t;throw e}
           const reader=res.body.getReader(),dec=new TextDecoder();let buf='',full='';
           while(true){
@@ -556,6 +565,7 @@ async function streamCall(system,userText,ui,onText,estLen,opts){
               if(!line.startsWith('data:'))continue;
               const js=line.slice(5).trim();if(!js||js==='[DONE]')continue;
               let j;try{j=JSON.parse(js)}catch(e){continue}
+              if(opts.claude){if(j.type==='error')throw new Error(`[${model}] ${(j.error&&j.error.message)||'스트림 오류'}`);if(j.type==='content_block_delta'&&j.delta&&j.delta.type==='text_delta'&&j.delta.text){full+=j.delta.text;st.chars=full.length;st.last=Date.now();if(!st.firstAt)st.firstAt=st.last;onText(full)}continue}
               if(j.error)throw new Error(`[${model}] ${j.error.message||'스트림 오류'}`);
               const c=j.candidates&&j.candidates[0];
               if(c&&c.groundingMetadata&&opts.onMeta)opts.onMeta(c.groundingMetadata);
@@ -1124,7 +1134,7 @@ async function genFeedback(id){
 [대화 기록]
 ${fmtLog(r.log).slice(-20000)}`;
     setStatus("피드백 생성 중... 아래 진행 상황을 확인하세요","#c4b5fd");
-    const txt=await streamCall(RULES,body,ui,t=>paint(t),avgReportLen());
+    const txt=await streamAI(RULES,body,ui,t=>paint(t),avgReportLen());
     const P=parseReport(txt);
     const a=LS.get(RK,[]),x=a.find(z=>z.id===id);
     if(x){x.report=txt;x.reportOk=true;x.next=P.next;x.scores=P.scores;x.total=P.total;x.verdict=P.verdict;x.metrics=ex?ex.m:null;LS.set(RK,a)}
@@ -1288,7 +1298,7 @@ async function genOverall(){
   }).join('\n\n');
   const paint=throttle(t=>renderSections(view,t),400);
   try{
-    const txt=await streamCall(OVERALL_RULES,ctx.slice(-28000),ui,t=>paint(t),0);
+    const txt=await streamAI(OVERALL_RULES,ctx.slice(-28000),ui,t=>paint(t),0);
     $('progBox2').classList.add('hide');
     LS.set(OK,{date:new Date().toLocaleString('ko-KR'),n:S.length,text:txt});
     renderSummary();
@@ -1328,7 +1338,7 @@ function ttsUpdateUI(){
     b.textContent=mine?(TTS.busy?'⏳ 음성 만드는 중... (눌러서 취소)':'⏹ 읽기 멈추기'):'🔊 피드백 듣기';
   });
 }
-function releaseLockIfIdle(){if(!active&&jobs.size===0&&!TTS.on)unlockScreen()}
+function releaseLockIfIdle(){if(!active&&jobs.size===0&&!TTS.on&&!(typeof HF!=='undefined'&&HF.on))unlockScreen()}
 let ttsAudio=null;
 function getAudio(){if(!ttsAudio){ttsAudio=new Audio();ttsAudio.preload='auto';ttsAudio.setAttribute('playsinline','')}return ttsAudio}
 function ttsStop(){
@@ -1345,8 +1355,15 @@ function pcmToWav(pcm,rate){
   v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n,true);
   new Uint8Array(buf,44).set(pcm);return new Blob([buf],{type:'audio/wav'});
 }
-const TTS_MODEL="gemini-3.1-flash-tts-preview";
+const TTS_MODELS=["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-3.1-flash-tts-preview"];
 async function geminiTtsPcm(text,gen){
+  let last;
+  for(const m of gModels(TTS_MODELS)){
+    try{return await geminiTtsPcmWith(m,text,gen)}catch(e){last=e;if(e&&(e.status===404||e.status===400))continue;throw e}
+  }
+  throw last||new Error("TTS 모델 없음");
+}
+async function geminiTtsPcmWith(model,text,gen){
   const key=API||$('apiKey').value.trim();if(!key)throw new Error('키 없음');
   const parts=[];
   for(const c of ttsChunksBig(text)){
@@ -1355,7 +1372,7 @@ async function geminiTtsPcm(text,gen){
     for(let t=0;t<2;t++){
       const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),30000);
       try{
-        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`,{
+        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
           method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','x-goog-api-key':key},
           body:JSON.stringify({contents:[{parts:[{text:'다음 글을 한국어로 차분하고 또렷하게, 자연스러운 속도로 읽어 주세요. 문장만 읽고 다른 말은 하지 마세요.\n\n'+c}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:CFG.ttsGVoice||'Kore'}}}}})
         });
@@ -1583,6 +1600,7 @@ function initCfg(){
   $('profile').value=CFG.profile||'';$('sens').checked=!!CFG.sens;
   $('profile').addEventListener('input',()=>{CFG.profile=$('profile').value;LS.set(CK,CFG)});
   $('sens').addEventListener('change',()=>{CFG.sens=$('sens').checked;LS.set(CK,CFG)});
+  {const ck=LS.get(CK2,'');if(ck)$('claudeKey').value=ck;$('claudeKey').addEventListener('input',()=>LS.set(CK2,$('claudeKey').value.trim()));$('brain').value=CFG.brain||'auto';$('brain').addEventListener('change',()=>{CFG.brain=$('brain').value;LS.set(CK,CFG)})}
   $('ttsOn').checked=CFG.tts!==false;$('ttsScope').value=CFG.ttsScope||'sum';$('ttsRate').value=String(CFG.ttsRate||1);
   $('rbLink').checked=CFG.rebootLink!==false;$('rbLink').addEventListener('change',()=>{CFG.rebootLink=$('rbLink').checked;LS.set(CK,CFG)});
   $('ttsOn').addEventListener('change',()=>{CFG.tts=$('ttsOn').checked;LS.set(CK,CFG);if(!CFG.tts)ttsStop()});
@@ -1702,13 +1720,15 @@ function dget(){const d=LS.get(DK,null)||{};d.hist=d.hist||[];d.days=d.days||{};
 function dsave(d){return LS.set(DK,d)}
 function dKey(t){const x=t?new Date(t):new Date();return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')}
 function drAvg(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:0}
+function drFirst(h){return!h.try||h.try===1}
+function drUniq(d,k){return new Set(d.hist.filter(h=>dKey(h.ts)===k).map(h=>h.cid)).size}
 function drUnlocked(d){
   let u=1;
-  for(let L=1;L<5;L++){const it=d.hist.filter(h=>h.lv===L).slice(-5);if(it.length>=5&&drAvg(it.map(h=>h.total))>=70)u=L+1;else break}
+  for(let L=1;L<5;L++){const it=d.hist.filter(h=>h.lv===L&&drFirst(h)).slice(-5);if(it.length>=5&&drAvg(it.map(h=>h.total))>=70)u=L+1;else break}
   return u;
 }
 function drAxisAvg(d,n){
-  const h=d.hist.slice(-(n||15)),o={};
+  const h=d.hist.filter(drFirst).slice(-(n||15)),o={};
   DR_AX.forEach(([k])=>{const v=h.map(x=>x.sc&&x.sc[k]).filter(v=>typeof v==='number');o[k]=v.length?drAvg(v):null});
   o.n=h.length;return o;
 }
@@ -1752,7 +1772,7 @@ function drBuildDay(d){
 function drDoneSet(d,day){const m={};d.hist.filter(h=>dKey(h.ts)===dKey()).forEach(h=>{m[h.cid]=h});return m}
 function drStreak(d){
   const done=new Set();
-  Object.keys(d.days).forEach(k=>{const day=d.days[k];const n=d.hist.filter(h=>dKey(h.ts)===k).length;if(n>=5)done.add(k)});
+  Object.keys(d.days).forEach(k=>{const day=d.days[k];const n=drUniq(d,k);if(n>=5)done.add(k)});
   let c=0;const x=new Date();
   if(!done.has(dKey(x)))x.setDate(x.getDate()-1);
   while(done.has(dKey(x))){c++;x.setDate(x.getDate()-1)}
@@ -1765,15 +1785,20 @@ function drTick(){
   $('drTimer').textContent=left>=0?drFmt(left):'+'+drFmt(-left);
   $('drTimer').style.color=left<0?'#fbbf24':'';
 }
+function hfStartCard(box){
+  const c=mk('div',null,'card');c.appendChild(mk('h2','🎧 핸즈프리 연습 (운전·러닝용)'));
+  c.appendChild(mk('div','시작을 누르면 앱이 먼저 상대 말을 읽어 주고, 내가 말하면 인식해서 확인 → 채점 → 피드백 낭독 → 다시/다음까지 말로 진행해요.','small'));
+  const b=mk('button','🎧 핸즈프리 시작','btn main');b.onclick=hfStart;c.appendChild(b);box.appendChild(c);
+}
 function renderDrill(){
   const d=dget(),day=drBuildDay(d),done=drDoneSet(d,day),cnt=day.cards.filter(id=>done[id]).length;
   const un=drUnlocked(d),L=day.lv;
   $('drStreak').textContent=drStreak(d)+'일';$('drToday').textContent=cnt+'/'+day.cards.length;
   const lv=$('drLv');lv.innerHTML='';
-  const auto=mk('button','자동','');auto.className=d.sel==='auto'?'on':'';auto.onclick=()=>{if(drBusy)return;const dd=dget();dd.sel='auto';delete dd.days[dKey()];dsave(dd);drCur=null;drShowRes=null;renderDrill()};lv.appendChild(auto);
+  const auto=mk('button','자동','');auto.className=d.sel==='auto'?'on':'';auto.onclick=()=>{if(drBusy||HF.on)return;const dd=dget();dd.sel='auto';delete dd.days[dKey()];dsave(dd);drCur=null;drShowRes=null;renderDrill()};lv.appendChild(auto);
   DR_LV.forEach((x,i)=>{
     const b=mk('button','Lv'+(i+1),'');b.className=(String(d.sel)===String(i+1)?'on ':'')+(i+1>un?'lock':'');
-    b.onclick=()=>{if(drBusy)return;const dd=dget();dd.sel=i+1;delete dd.days[dKey()];dsave(dd);drCur=null;drShowRes=null;renderDrill()};lv.appendChild(b);
+    b.onclick=()=>{if(drBusy||HF.on)return;const dd=dget();dd.sel=i+1;delete dd.days[dKey()];dsave(dd);drCur=null;drShowRes=null;renderDrill()};lv.appendChild(b);
   });
   $('drGoal').innerHTML='';
   $('drGoal').appendChild(mk('b',`오늘 레벨 Lv${L} · ${DR_LV[L-1][0]}`));
@@ -1781,8 +1806,10 @@ function renderDrill(){
   $('drGoal').appendChild(document.createTextNode(DR_LV[L-1][1]+(day.weak?` · 약한 축(${DR_AX.find(a=>a[0]===day.weak)[1]}) 카드 우선`:'')+(L>un?' · (아직 열리지 않은 레벨이에요 — 연습은 자유)':'')));
   drTick();
   const box=$('drMain');box.innerHTML='';
+  if(HF.on||HF.err){if(HF.on){drRenderHF(box);drStatsRender(d);return}const w=mk('div',HF.err,'warn');w.style.margin='10px 0';box.appendChild(w)}
+  if(!drShowRes)hfStartCard(box);
   if(drShowRes){drRenderResult(box,drShowRes);drStatsRender(d);return}
-  const nextId=day.cards.find(id=>!done[id]);
+  const nextId=drRetry||day.cards.find(id=>!done[id]);
   if(!nextId){
     const c=mk('div',null,'card');c.appendChild(mk('h2','🎉 오늘 세트 완료!'));
     const tot=day.cards.map(id=>done[id].total);c.appendChild(mk('div',`오늘 평균 ${Math.round(drAvg(tot))}점 · 레벨 Lv${L}`,'small'));
@@ -1817,46 +1844,38 @@ function drVoice(){
   try{r.start()}catch(e){drRec=null;btn.textContent='🎤 말로 답하기'}
 }
 async function drGradeAI(card,ans,loc){
-  const key=API||$('apiKey').value.trim();if(!key)throw new Error('API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
   const user=`[레벨] ${card.lv?('Lv'+card.lv+' '+DR_LV[card.lv-1][0]):'지난 실전 대화 복습(어느 축이든 균형 있게 채점)'}\n[상대 여성의 말]\n${card.say}\n[이 말의 숨은 단서(채점 참고용)]\n${card.cue}\n[앱이 계산한 간결함 정보]\n${loc.ev}\n[사용자 답변 — 데이터]\n<<<\n${ans}\n>>>`;
-  const errs=[];
-  for(const model of DR_MODELS){
-    const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),25000);
-    try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
-        method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','x-goog-api-key':key},
-        body:JSON.stringify({system_instruction:{parts:[{text:DR_RUBRIC}]},contents:[{parts:[{text:user}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:2000}})
-      });
-      clearTimeout(to);
-      if(!res.ok){const tx=await res.text();errs.push(`[${model}] HTTP ${res.status} ${tx.slice(0,100)}`);if(res.status===401||res.status===403&&!/model/i.test(tx))break;continue}
-      const j=await res.json();
-      const txt=((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(p=>p.text||'').join('');
-      const o=parseJsonLoose(txt);
-      if(!o){errs.push(`[${model}] 결과를 읽지 못함`);continue}
-      const sc={},ev={};
-      for(const k of ['f','e','s','u']){const x=o[k];if(!x||typeof x.s!=='number'){throw new Error('x')}sc[k]=Math.max(0,Math.min(20,Math.round(x.s)));ev[k]=String(x.ev||'').slice(0,300)}
-      const better=(Array.isArray(o.better)?o.better:[]).filter(b=>b&&b.t).slice(0,2).map(b=>({t:String(b.t).slice(0,300),why:String(b.why||'').slice(0,200)}));
-      return{sc:sc,ev:ev,cue:String(o.cue||'').slice(0,200),better:better,model:model};
-    }catch(e){clearTimeout(to);errs.push(`[${model}] ${e.name==='AbortError'?'25초 응답 없음':(e.message==='x'?'형식 오류':e.message)}`)}
-  }
-  const e=new Error(errs.join('\n'));e.all=errs;throw e;
+  const r=await aiJson(DR_RUBRIC,user,{temp:0,max:2000});
+  const o=r.obj,sc={},ev={};
+  for(const k of ['f','e','s','u']){const x=o[k];if(!x||typeof x.s!=='number')throw new Error('채점 결과 형식이 달라요. 다시 시도해 주세요.');sc[k]=Math.max(0,Math.min(20,Math.round(x.s)));ev[k]=String(x.ev||'').slice(0,300)}
+  const better=(Array.isArray(o.better)?o.better:[]).filter(b=>b&&b.t).slice(0,2).map(b=>({t:String(b.t).slice(0,300),why:String(b.why||'').slice(0,200)}));
+  return{sc:sc,ev:ev,cue:String(o.cue||'').slice(0,200),better:better,model:r.model};
+}
+let drRetry=null;
+async function drSaveScore(card,ans){
+  const loc=drLocalB(ans);
+  const g=await drGradeAI(card,ans,loc);
+  const sc=Object.assign({},g.sc,{b:loc.s});
+  const total=sc.f+sc.e+sc.s+sc.u+sc.b;
+  const d=dget();
+  const prev=d.hist.filter(h=>h.cid===card.id&&dKey(h.ts)===dKey());
+  const rec={ts:Date.now(),cid:card.id,lv:card.lv,ans:ans,sc:sc,ev:Object.assign({},g.ev,{b:loc.ev}),better:g.better,cue:g.cue,total:total,model:g.model,fill:loc.fill,try:prev.length+1};
+  if(prev.length)rec.first=prev[0].total;
+  d.hist.push(rec);if(d.hist.length>500)d.hist=d.hist.slice(-500);
+  dsave(d);
+  {const dd=dget(),dy=dd.days[dKey()];if(dy&&drUniq(dd,dKey())>=5&&!dy.rb){dy.rb=rebootAutoCheck();dsave(dd)}}
+  return rec;
 }
 async function drSubmit(){
   if(drBusy||!drCur)return;
   const ta=$('drAns'),ans=ta.value.trim(),msg=$('drMsg');
   if(ans.length<2){msg.textContent='답을 먼저 적어 주세요.';return}
   drBusy=true;$('drSubmit').disabled=true;$('drMic').disabled=true;if(drRec){try{drRec.stop()}catch(e){}}
-  const card=drCur,loc=drLocalB(ans);
+  const card=drCur;
   msg.textContent='🧮 채점 중이에요... (보통 3~10초)';msg.style.color='#7dd3fc';
   try{
-    const g=await drGradeAI(card,ans,loc);
-    const sc=Object.assign({},g.sc,{b:loc.s});
-    const total=sc.f+sc.e+sc.s+sc.u+sc.b;
-    const rec={ts:Date.now(),cid:card.id,lv:card.lv,ans:ans,sc:sc,ev:Object.assign({},g.ev,{b:loc.ev}),better:g.better,cue:g.cue,total:total,model:g.model,fill:loc.fill};
-    const d=dget();d.hist.push(rec);if(d.hist.length>500)d.hist=d.hist.slice(-500);
-    if(!dsave(d))msg.textContent='⚠️ 저장 공간이 부족해요. 설정에서 백업 후 정리해 주세요.';
-    drShowRes=rec;
-    {const dd=dget(),dy=dd.days[dKey()],n=dd.hist.filter(h=>dKey(h.ts)===dKey()).length;if(dy&&n>=5&&!dy.rb){dy.rb=rebootAutoCheck();dsave(dd)}}
+    const rec=await drSaveScore(card,ans);
+    drShowRes=rec;drRetry=null;
   }catch(e){
     console.error(e);
     msg.style.color='#f87171';
@@ -1866,11 +1885,12 @@ async function drSubmit(){
   }
   drBusy=false;renderDrill();
 }
-function drRenderResult(box,rec){
+function drRenderResult(box,rec,compact){
   const card=drFind(rec.cid)||{say:'',cue:''};
   const c=mk('div',null,'card');
   const top=mk('div',null,'');top.appendChild(mk('span',String(rec.total),'dr-tot'));top.appendChild(mk('span',' / 100','small'));c.appendChild(top);
   c.appendChild(mk('div','상대: '+card.say,'small'));
+  if(rec.first!=null&&rec.try>1){const df=rec.total-rec.first;c.appendChild(mk('div',`🔁 ${rec.try}번째 시도 · 첫 시도 ${rec.first}점 → ${rec.total}점 (${df>0?'+':''}${df})`,'st-tip'))}
   DR_AX.forEach(([k,n])=>{
     const v=rec.sc[k],a=mk('div',null,'dr-ax');
     const h=mk('div',null,'dr-axh');h.appendChild(mk('span',n));h.appendChild(mk('span',v+' / 20'));a.appendChild(h);
@@ -1884,9 +1904,12 @@ function drRenderResult(box,rec){
   const g=mk('div',null,'dr-bet');
   (rec.better||[]).forEach((b,i)=>{const x=mk('div',b.t);x.insertBefore(mk('div',i?'B':'A','small'),x.firstChild);if(b.why)x.appendChild(mk('small',b.why));g.appendChild(x)});
   cmp.appendChild(g);c.appendChild(cmp);
-  const d=dget(),done=d.hist.filter(h=>dKey(h.ts)===dKey()).length;
+  const d=dget(),done=drUniq(d,dKey());
   const nx=mk('button',done>=5&&!dget().days[dKey()].cards.find(id=>!drDoneSet(d)[id])?'오늘 세트 마무리':'다음 문제 →','btn main');nx.onclick=()=>{drShowRes=null;if(!dget().days[dKey()].cards.find(id=>!drDoneSet(dget())[id]))drT0=0;renderDrill();window.scrollTo({top:0})};
+  if(compact){c.appendChild(mk('div','채점: '+(rec.model||''),'small'));box.appendChild(c);return}
   {const dy=dget().days[dKey()];if(dy&&dy.rb){const m=rebootMsg(dy.rb);if(m)c.appendChild(mk('div',m,'st-tip'))}}
+  c.appendChild(mk('div','채점: '+(rec.model||''),'small'));
+  const rt=mk('button','🔁 이 문제 다시 말해 보기','btn sub');rt.onclick=()=>{drRetry=rec.cid;drShowRes=null;renderDrill();window.scrollTo({top:0})};c.appendChild(rt);
   c.appendChild(nx);box.appendChild(c);
 }
 function drStatsRender(d){
@@ -1903,10 +1926,10 @@ function drStatsRender(d){
   c.appendChild(mk('div',`표본 ${a.n}문제`+(w?` · 약한 축 카드가 오늘 세트에 우선 섞여요`:' · 3문제 이상 풀면 약한 축을 찾아요'),'small'));
   // 최근 14일 완료 점
   const dots=mk('div',null,'dr-dots');const x=new Date();x.setDate(x.getDate()-13);
-  for(let i=0;i<14;i++){const k=dKey(x);const n=d.hist.filter(h=>dKey(h.ts)===k).length;const e=mk('i',String(x.getDate()));e.className=n>=5?'d':(n>0?'p':'');dots.appendChild(e);x.setDate(x.getDate()+1)}
+  for(let i=0;i<14;i++){const k=dKey(x);const n=drUniq(d,k);const e=mk('i',String(x.getDate()));e.className=n>=5?'d':(n>0?'p':'');dots.appendChild(e);x.setDate(x.getDate()+1)}
   c.appendChild(mk('div','최근 14일 (초록=5문제 완료, 노랑=일부)','small'));c.appendChild(dots);
   // 점수 추이
-  const last=d.hist.slice(-20).map(h=>h.total);
+  const last=d.hist.filter(drFirst).slice(-20).map(h=>h.total);
   if(last.length>=2){
     const W=300,H=60,pts=last.map((v,i)=>`${(i/(last.length-1)*W).toFixed(1)},${(H-v/100*H).toFixed(1)}`).join(' ');
     const wrap=document.createElement('div');wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="60" preserveAspectRatio="none" style="margin-top:10px;background:var(--bg2);border-radius:10px"><polyline fill="none" stroke="#ff8a5c" stroke-width="2.5" points="${pts}"/></svg>`;
@@ -1937,27 +1960,11 @@ function stLocal(t){
   return{sent:sents.length,avg:sents.length?Math.round(t.length/sents.length):0,len:t.length,fill:fill};
 }
 async function stAI(raw){
-  const key=API||$('apiKey').value.trim();if(!key)throw new Error('API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
-  const errs=[];
-  for(const model of DR_MODELS){
-    const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),30000);
-    try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{
-        method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','x-goog-api-key':key},
-        body:JSON.stringify({system_instruction:{parts:[{text:ST_RUBRIC}]},contents:[{parts:[{text:'[원재료 — 데이터]\n<<<\n'+raw+'\n>>>'}]}],generationConfig:{temperature:0.4,responseMimeType:'application/json',maxOutputTokens:2000}})
-      });
-      clearTimeout(to);
-      if(!res.ok){const tx=await res.text();errs.push(`[${model}] HTTP ${res.status} ${tx.slice(0,100)}`);if(res.status===401)break;continue}
-      const j=await res.json();
-      const txt=((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(p=>p.text||'').join('');
-      const o=parseJsonLoose(txt);
-      if(!o||!o.hook||!o.v30){errs.push(`[${model}] 결과를 읽지 못함`);continue}
-      const S=x=>String(x||'').trim();
-      const chk={};ST_CHK.forEach(([k])=>{const c=(o.chk&&o.chk[k])||{};chk[k]={ok:c.ok===true,tip:S(c.tip).slice(0,200)}});
-      return{hook:S(o.hook).slice(0,120),beats:(Array.isArray(o.beats)?o.beats:[]).map(S).filter(Boolean).slice(0,4),v30:S(o.v30).slice(0,600),qs:(Array.isArray(o.qs)?o.qs:[]).map(S).filter(Boolean).slice(0,3),stage:ST_STAGES.find(s=>s[0]===o.stage)?o.stage:'exp',chk:chk,model:model};
-    }catch(e){clearTimeout(to);errs.push(`[${model}] ${e.name==='AbortError'?'30초 응답 없음':e.message}`)}
-  }
-  const e=new Error(errs.join('\n'));e.all=errs;throw e;
+  const r=await aiJson(ST_RUBRIC,'[원재료 — 데이터]\n<<<\n'+raw+'\n>>>',{temp:0.4,max:2200});
+  const o=r.obj;if(!o||!o.hook||!o.v30)throw new Error('결과를 읽지 못했어요. 다시 시도해 주세요.');
+  const S=x=>String(x||'').trim();
+  const chk={};ST_CHK.forEach(([k])=>{const c=(o.chk&&o.chk[k])||{};chk[k]={ok:c.ok===true,tip:S(c.tip).slice(0,200)}});
+  return{hook:S(o.hook).slice(0,120),beats:(Array.isArray(o.beats)?o.beats:[]).map(S).filter(Boolean).slice(0,4),v30:S(o.v30).slice(0,600),qs:(Array.isArray(o.qs)?o.qs:[]).map(S).filter(Boolean).slice(0,3),stage:ST_STAGES.find(x=>x[0]===o.stage)?o.stage:'exp',chk:chk,model:r.model};
 }
 let stBusy=false,stEditId=null,stRec=null,stPrac=null;
 async function stAdd(){
@@ -2203,6 +2210,326 @@ function rebootMsg(r){
   if(r.ok)return r.already?'✅ 100일 리부트의 오늘 "대화 연습 1회"는 이미 체크돼 있어요.':'✅ 100일 리부트의 "대화 연습 1회"를 체크했어요. (리부트 앱을 다시 열면 보여요)';
   const m={off:'설정에서 리부트 자동 체크가 꺼져 있어요.',origin:'ℹ️ 리부트 자동 체크는 이 앱을 리부트와 같은 주소(kg4909-design.github.io)에서 열었을 때만 돼요.',none:'ℹ️ 리부트 앱 데이터를 찾지 못했어요. 리부트 앱을 한 번 열어 둔 뒤 다시 해 보세요.',bad:'리부트 데이터를 읽지 못했어요.',nohabit:'리부트에 "대화 연습"(talk) 습관이 없어요.',err:'리부트 체크에 실패했어요.'};
   return m[r.why]||'';
+}
+
+/* ================= AI 두뇌 선택(Gemini / Claude) + 연결 점검 ================= */
+const CK2="claude_api_key",MK="models_avail_v1";
+const CLAUDE_STREAM=["claude-sonnet-5-5","claude-haiku-5-5"];
+const CLAUDE_FAST=["claude-haiku-5-5","claude-sonnet-5-5"];
+function claudeKey(){const e=$('claudeKey');return(e&&e.value.trim())||LS.get(CK2,"")||""}
+function gKey(){return API||($('apiKey')&&$('apiKey').value.trim())||""}
+function gModels(list){
+  try{const a=LS.get(MK,null);if(a&&Array.isArray(a.ids)&&a.ids.length){const f=list.filter(m=>a.ids.includes(m));if(f.length)return f}}catch(e){}
+  return list;
+}
+async function claudeFetch(model,system,user,max,signal,stream){
+  const key=claudeKey();if(!key){const e=new Error('Claude API 키가 없어요');e.status=401;throw e}
+  const go=eff=>fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal:signal,headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify(Object.assign({model:model,max_tokens:max,system:system,messages:[{role:'user',content:user}],stream:!!stream},eff?{output_config:{effort:'low'}}:{}))});
+  let res=await go(true);
+  if(res.status===400){try{const t=await res.clone().text();if(/output_config|effort/i.test(t))res=await go(false)}catch(e){}}
+  return res;
+}
+/* 글자로 답을 받는 짧은 호출(JSON). 채점·이야기 다듬기에서 사용 */
+async function aiJson(system,user,o){
+  o=o||{};const brain=CFG.brain||'auto',errs=[];
+  const hasG=!!gKey(),hasC=!!claudeKey();
+  const plan=[];
+  const gl=gModels(DR_MODELS).slice(0,3);
+  if(brain!=='claude'&&hasG)gl.forEach(m=>plan.push({p:'g',m:m}));
+  if(brain!=='gemini'&&hasC)CLAUDE_FAST.forEach(m=>plan.push({p:'c',m:m}));
+  if(brain==='claude'&&!hasC)throw new Error('Claude API 키가 없어요. ⚙️ 설정에서 입력하거나 AI 두뇌를 바꿔 주세요.');
+  if(!plan.length)throw new Error('API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
+  let claudeTried=0;
+  for(const s of plan){
+    const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),s.p==='c'?50000:25000);
+    try{
+      let txt='';
+      if(s.p==='g'){
+        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${s.m}:generateContent`,{method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','x-goog-api-key':gKey()},
+          body:JSON.stringify({system_instruction:{parts:[{text:system}]},contents:[{parts:[{text:user}]}],generationConfig:{temperature:o.temp==null?0:o.temp,responseMimeType:'application/json',maxOutputTokens:o.max||2000}})});
+        clearTimeout(to);
+        if(!res.ok){const tx=await res.text();errs.push(`[${s.m}] HTTP ${res.status} ${tx.slice(0,100)}`);if(res.status===401||res.status===400&&/API key/i.test(tx))break;continue}
+        const j=await res.json();txt=((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(p=>p.text||'').join('');
+      }else{
+        const res=await claudeFetch(s.m,system,user,Math.max(o.max||2000,4000),ctl.signal,false);
+        clearTimeout(to);
+        if(!res.ok){const tx=await res.text();errs.push(`[${s.m}] HTTP ${res.status} ${tx.slice(0,140)}`);if(res.status===401)break;continue}
+        const j=await res.json();txt=(j.content||[]).filter(b=>b.type==='text').map(b=>b.text||'').join('');
+      }
+      const obj=parseJsonLoose(txt);
+      if(!obj){errs.push(`[${s.m}] 결과를 읽지 못함`);continue}
+      return{obj:obj,model:s.m,provider:s.p,fell:errs.length>0&&s.p==='c'};
+    }catch(e){clearTimeout(to);errs.push(`[${s.m}] ${e.name==='AbortError'?(s.p==='c'?'50초':'25초')+' 응답 없음':e.message}`)}
+  }
+  const e=new Error(errs.join('\n'));e.all=errs;throw e;
+}
+/* 길게 이어서 쓰는 호출(피드백). 자동 모드: Gemini가 막히면 Claude로 전환 */
+async function streamAI(system,userText,ui,onText,estLen,opts){
+  opts=opts||{};const brain=CFG.brain||'auto',hasC=!!claudeKey(),hasG=!!gKey();
+  if(brain==='claude'||(brain==='auto'&&!hasG&&hasC)){
+    if(!hasC)throw new Error('Claude API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
+    return streamCall(system,userText,ui,onText,estLen,Object.assign({},opts,{claude:true}));
+  }
+  if(brain==='gemini'||!hasC)return streamCall(system,userText,ui,onText,estLen,opts);
+  try{
+    return await streamCall(system,userText,ui,onText,estLen,Object.assign({},opts,{maxModels:2,firstMs:30000,idleMs:25000}));
+  }catch(e){
+    if(opts.holder&&opts.holder.skipped)throw e;
+    if(/ 401| 403/.test(e.message)&&!/models?/i.test(e.message)){/* 키 문제도 Claude로 시도 */}
+    setStatus('Gemini가 막혀 Claude로 전환해서 다시 만드는 중이에요...','#fbbf24');
+    try{return await streamCall(system,userText,ui,onText,estLen,Object.assign({},opts,{claude:true}))}
+    catch(e2){const all=(e.all||[e.message]).concat(e2.all||[e2.message]);const er=new Error(all.join('\n'));er.all=all;throw er}
+  }
+}
+/* 연결 점검 */
+async function connCheck(){
+  const out=$('chkOut'),btn=$('chkBtn');out.hidden=false;btn.disabled=true;
+  const L=[];const show=()=>{out.textContent=L.join('\n')};
+  const T=async(label,fn)=>{L.push('⏳ '+label+' ...');show();const i=L.length-1,t0=Date.now();try{const r=await fn();L[i]=`✅ ${label} — ${((Date.now()-t0)/1000).toFixed(1)}초${r?' · '+r:''}`}catch(e){L[i]=`❌ ${label} — ${((Date.now()-t0)/1000).toFixed(1)}초 · ${String(e&&e.message||e).slice(0,160)}`}show()};
+  try{
+    const key=gKey();
+    if(!key){L.push('❌ Gemini API 키가 비어 있어요 (⚙️ 위쪽 칸)')}
+    else{
+      let ids=[];
+      await T('Gemini 모델 목록 조회',async()=>{
+        const res=await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':key}});
+        if(!res.ok)throw new Error('HTTP '+res.status+' '+(await res.text()).slice(0,100));
+        const j=await res.json();const ms=j.models||[];
+        ids=ms.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')).map(m=>m.name.replace('models/',''));
+        LS.set(MK,{ids:ids,at:Date.now()});
+        const live=ms.filter(m=>/live/i.test(m.name)).map(m=>m.name.replace('models/','')),tts=ids.filter(m=>/tts/.test(m));
+        return `글쓰기 모델 ${ids.length}개 · 쓰는 모델: ${TEXT_MODELS.map(m=>m+(ids.includes(m)?'✓':'✗없음')).join(', ')} · 음성(TTS): ${tts.join(', ')||'없음'} · 실시간: ${live.join(', ')||'목록에 없음'}`;
+      });
+      const tm=gModels(TEXT_MODELS).slice(0,3);
+      for(const m of tm){
+        await T(`Gemini ${m} 응답 속도`,async()=>{
+          const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),20000);
+          try{
+            const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,{method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{parts:[{text:'OK 라고만 답해'}]}],generationConfig:{maxOutputTokens:20}})});
+            if(!res.ok)throw new Error('HTTP '+res.status+' '+(await res.text()).slice(0,100));
+            await res.json();
+          }catch(e){if(e.name==='AbortError')throw new Error('20초 안에 응답이 없어요');throw e}finally{clearTimeout(to)}
+        });
+      }
+      await T('Gemini 실시간 대화(WebSocket) 연결',()=>new Promise((res,rej)=>{
+        let ws;try{ws=new WebSocket('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+key)}catch(e){rej(e);return}
+        const to=setTimeout(()=>{try{ws.close()}catch(e){}rej(new Error('10초 안에 준비 신호가 없어요'))},10000);
+        ws.onopen=()=>ws.send(JSON.stringify({setup:{model:'models/gemini-3.8-live',generationConfig:{responseModalities:['AUDIO']}}}));
+        ws.onmessage=async ev=>{let t=ev.data;if(t instanceof Blob)t=await t.text();if(/setupComplete/.test(t)){clearTimeout(to);try{ws.close()}catch(e){}res('준비 완료')}};
+        ws.onclose=c=>{clearTimeout(to);rej(new Error(`닫힘 code ${c.code} ${c.reason||''}`.slice(0,140)))};
+        ws.onerror=()=>{};
+      }));
+    }
+    if(claudeKey()){
+      await T('Claude 응답 속도 (claude-haiku-5-5)',async()=>{
+        const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),30000);
+        try{const res=await claudeFetch('claude-haiku-5-5','짧게 답해','OK 라고만 답해',300,ctl.signal,false);if(!res.ok)throw new Error('HTTP '+res.status+' '+(await res.text()).slice(0,140));await res.json()}
+        catch(e){if(e.name==='AbortError')throw new Error('30초 안에 응답이 없어요');throw e}finally{clearTimeout(to)}
+      });
+    }else L.push('· Claude 키가 없어요 (선택 사항)');
+    L.push('');L.push('이 결과를 그대로 캡처해서 알려 주시면 원인을 정확히 짚을 수 있어요.');show();
+  }finally{btn.disabled=false}
+}
+
+/* ================= 핸즈프리 음성 드릴 ================= */
+const HF={on:false,gen:0,state:'',card:null,text:'',ans:'',rec:null,last:null,err:'',noSp:0,ask:0,tries:0,msg:''};
+const HF_OK=/(오케이|오키|okay|ok|확인|채점|좋아요|맞아요|맞아|응|네)/i;
+const HF_REDO=/(다시|아니요|아니|재녹음|처음부터|한번 더|한 번 더)/;
+const HF_NEXT=/(다음|넘어가|패스|스킵)/;
+const HF_STOP=/(종료|그만|멈춰|끝낼게|끝내)/;
+const HF_TAIL=/[\s,.]*(오케이|오키|확인|채점해?\s*줘|채점|끝)\s*[.!]?$/;
+function hfStopRec(){try{if(HF.rec){HF.rec.onend=null;HF.rec.onresult=null;HF.rec.onerror=null;HF.rec.stop()}}catch(e){}HF.rec=null}
+function hfSay(text){
+  return new Promise(res=>{
+    if(!HF.on){res();return}
+    let done=false;const fin=()=>{if(done)return;done=true;clearTimeout(to);res()};
+    const to=setTimeout(fin,Math.min(45000,text.length*330+5000));
+    try{if(!hasTTS()){setTimeout(fin,1500);return}ttsBrowser(ttsClean(text),{quiet:true,onDone:fin})}catch(e){fin()}
+  });
+}
+function hfFatal(msg){HF.err=msg;hfStop()}
+function hfListen(opt){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){hfFatal('이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬에서 열어 주세요.');return}
+  hfStopRec();
+  const g=HF.gen,r=new SR();r.lang='ko-KR';r.interimResults=true;r.continuous=false;HF.rec=r;
+  let text='',interim='',lastAt=Date.now(),startAt=Date.now(),finished=false,iv=null;
+  const finish=why=>{
+    if(finished||g!==HF.gen)return;finished=true;clearInterval(iv);
+    try{r.onend=null;r.onresult=null;r.onerror=null;r.stop()}catch(e){}
+    if(HF.rec===r)HF.rec=null;
+    const t=(text+' '+interim).trim();
+    if(t)opt.onFinal(t);else if(opt.onTimeout)opt.onTimeout(why);
+  };
+  r.onresult=e=>{
+    /* 안드로이드 크롬은 continuous 모드에서 글자가 겹쳐 들어오는 일이 있어, 한 번에 한 문장씩 받아 직접 이어 붙여요 */
+    let cur='',fin=false;
+    for(let i=0;i<e.results.length;i++){const x=e.results[i];cur+=(cur?' ':'')+x[0].transcript;if(x.isFinal)fin=true}
+    if(fin){text=(text+' '+cur).trim();interim=''}else interim=cur.trim();
+    lastAt=Date.now();if(!opt.noLive){HF.text=(text+' '+interim).trim();hfLive()}
+  };
+  r.onerror=e=>{
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){finished=true;clearInterval(iv);hfFatal('마이크 권한이 필요해요. 브라우저 설정에서 마이크를 허용해 주세요.')}
+  };
+  r.onend=()=>{if(finished||g!==HF.gen)return;setTimeout(()=>{if(finished||g!==HF.gen)return;try{r.start()}catch(e){}},150)};
+  iv=setInterval(()=>{
+    if(g!==HF.gen||finished){clearInterval(iv);return}
+    const now=Date.now(),t=(text+' '+interim).trim();
+    if(t&&now-lastAt>=(opt.silenceMs||2300))finish('silence');
+    else if(!t&&now-startAt>=(opt.maxMs||20000))finish('timeout');
+  },400);
+  try{r.start()}catch(e){hfFatal('음성 인식을 시작하지 못했어요. 잠시 후 다시 눌러 주세요.')}
+}
+function hfWait(map,o){
+  o=o||{};
+  hfListen({maxMs:o.maxMs||9000,silenceMs:1200,noLive:true,
+    onFinal:t=>{for(const [re,fn] of map){if(re.test(t)){fn(t);return}}if(o.onNone)o.onNone('unknown',t)},
+    onTimeout:()=>{if(o.onNone)o.onNone('timeout')}});
+}
+function hfSet(state,msg){HF.state=state;if(msg!==undefined)HF.msg=msg;hfRender()}
+async function hfStart(){
+  if(HF.on)return;
+  if(!(gKey()||claudeKey())){alert('설정에서 API 키를 먼저 입력해 주세요.');return}
+  HF.on=true;HF.gen++;HF.err='';HF.noSp=0;HF.ask=0;HF.last=null;drShowRes=null;drRetry=null;
+  ttsUnlock();lockScreen();
+  hfNext(true);
+}
+function hfStop(){
+  HF.on=false;HF.gen++;hfStopRec();ttsStop();HF.state='';HF.text='';unlockScreen();
+  if(!active)try{renderDrill()}catch(e){}
+}
+function hfNext(first){
+  if(!HF.on)return;const g=HF.gen;
+  const d=dget(),day=drBuildDay(d),done=drDoneSet(d),id=day.cards.find(x=>!done[x]);
+  if(!id){hfFinishAll();return}
+  HF.card=drFind(id);HF.tries=0;HF.ans='';HF.text='';HF.ask=0;HF.noSp=0;HF.last=null;
+  hfPrompt(first,day.cards.indexOf(id)+1,day.cards.length);
+}
+async function hfPrompt(first,n,tot){
+  const g=HF.gen;hfSet('prompt');
+  await hfSay((first?'핸즈프리 연습을 시작할게요. ':'')+`${n}번 문제. 상대가 이렇게 말해요. ${HF.card.say} 이제 말씀해 주세요.`);
+  if(g!==HF.gen||!HF.on)return;hfAnswer();
+}
+function hfAnswer(){
+  const g=HF.gen;HF.text='';hfSet('listen');
+  hfListen({maxMs:22000,silenceMs:2800,
+    onFinal:t=>hfGot(t),
+    onTimeout:async()=>{
+      if(g!==HF.gen)return;HF.noSp++;
+      if(HF.noSp>=2){HF.noSp=0;await hfSay('소리가 잘 안 들려요. 문제를 다시 읽어 드릴게요.');if(g!==HF.gen)return;hfPrompt(false,0,0)}
+      else{await hfSay('말씀해 주세요. 듣고 있어요.');if(g!==HF.gen)return;hfAnswer()}
+    }});
+}
+async function hfGot(t){
+  const g=HF.gen,m=t.match(HF_TAIL);
+  if(HF_STOP.test(t)&&t.length<8){hfStop();return}
+  if(m){const rest=t.slice(0,m.index).trim();if(rest.length>=2){HF.ans=rest;HF.text=rest;hfSubmit();return}if(rest.length<2){hfAnswer();return}}
+  HF.ans=t;HF.text=t;HF.ask=0;hfConfirm(true);
+}
+async function hfConfirm(readback){
+  const g=HF.gen;hfSet('confirm');
+  await hfSay(readback?`이렇게 말씀하셨어요. ${HF.ans}. 채점할까요? 오케이, 또는 다시, 라고 말해 주세요.`:'오케이, 또는 다시, 라고 말해 주세요.');
+  if(g!==HF.gen)return;
+  hfWait([[HF_STOP,()=>hfStop()],[HF_REDO,()=>hfRedo()],[HF_OK,()=>hfSubmit()]],{maxMs:9000,onNone:async()=>{
+    if(g!==HF.gen)return;HF.ask++;
+    if(HF.ask<2)hfConfirm(false);
+    else{await hfSay('응답이 없어서 그대로 채점할게요.');if(g!==HF.gen)return;hfSubmit()}
+  }});
+}
+async function hfRedo(){const g=HF.gen;HF.ans='';HF.text='';HF.ask=0;await hfSay('좋아요, 다시 말씀해 주세요.');if(g!==HF.gen)return;hfAnswer()}
+async function hfSubmit(){
+  const g=HF.gen;hfSet('grade','');
+  const p=drSaveScore(HF.card,HF.ans).then(r=>({r:r}),e=>({e:e}));
+  await hfSay('채점 중이에요.');if(g!==HF.gen)return;
+  const o=await p;if(g!==HF.gen)return;
+  if(o.e){
+    const m=((o.e.all&&o.e.all.join('\n'))||o.e.message||'').slice(0,300);HF.msg='채점 실패: '+m;hfSet('error');
+    await hfSay('채점에 실패했어요. 다시 시도하려면 다시, 넘어가려면 다음이라고 말해 주세요.');if(g!==HF.gen)return;
+    hfWait([[HF_STOP,()=>hfStop()],[HF_NEXT,()=>hfNext(false)],[HF_REDO,()=>hfSubmit()]],{maxMs:12000,onNone:()=>{if(g!==HF.gen)return;hfStop()}});return;
+  }
+  HF.last=o.r;drShowRes=o.r;HF.text=HF.ans;hfSet('feedback');
+  await hfSay(hfFeedbackText(o.r));if(g!==HF.gen)return;
+  hfAfter();
+}
+function hfFeedbackText(r){
+  const nm=k=>DR_AX.find(a=>a[0]===k)[1];
+  const ks=DR_AX.map(a=>a[0]).filter(k=>typeof r.sc[k]==='number');
+  const lo=ks.slice().sort((a,b)=>r.sc[a]-r.sc[b])[0],hi=ks.slice().sort((a,b)=>r.sc[b]-r.sc[a])[0];
+  const cut=s=>{s=(s||'').replace(/\s+/g,' ').trim();const i=s.search(/[.!?]\s/);return(i>10?s.slice(0,i+1):s).slice(0,110)};
+  let t=`총점 ${r.total}점이에요. `;
+  if(r.first!=null&&r.try>1){const d=r.total-r.first;t+=d>0?`첫 시도보다 ${d}점 올랐어요. `:(d<0?`첫 시도보다 ${-d}점 내려갔어요. `:'첫 시도와 같아요. ')}
+  let why=cut(r.ev&&r.ev[lo]);if(/^해당 표현 없음/.test(why))why=why.replace(/^해당 표현 없음\s*[+·,]?\s*/,'').trim()||'이 부분이 빠져 있었어요.';
+  t+=`잘한 부분은 ${nm(hi)} ${r.sc[hi]}점. 아쉬운 부분은 ${nm(lo)} ${r.sc[lo]}점이에요. ${why} `;
+  const b=r.better||[];
+  if(b[0])t+=`이렇게 말해 보세요. 첫째, ${b[0].t}. `;
+  if(b[1])t+=`둘째, ${b[1].t}. `;
+  return t;
+}
+async function hfAfter(){
+  const g=HF.gen;HF.ask=0;
+  await hfSay('다시 해 보려면 다시, 다음 문제는 다음, 그만하려면 종료라고 말해 주세요.');if(g!==HF.gen)return;
+  const wait=()=>hfWait([[HF_STOP,()=>hfStop()],[HF_REDO,()=>hfRetry()],[HF_NEXT,()=>{drShowRes=null;hfNext(false)}]],{maxMs:12000,onNone:async()=>{
+    if(g!==HF.gen)return;HF.ask++;
+    if(HF.ask<2){await hfSay('다시, 또는 다음 이라고 말해 주세요.');if(g!==HF.gen)return;wait()}
+    else{await hfSay('다음 문제로 넘어갈게요.');if(g!==HF.gen)return;drShowRes=null;hfNext(false)}
+  }});
+  wait();
+}
+async function hfRetry(){
+  const g=HF.gen;HF.tries++;HF.ans='';HF.text='';HF.ask=0;drShowRes=null;hfSet('listen');
+  await hfSay('개선 예시를 참고해서 다시 말씀해 주세요.');if(g!==HF.gen)return;hfAnswer();
+}
+async function hfFinishAll(){
+  const g=HF.gen,d=dget(),done=drDoneSet(d),tot=Object.values(done).map(h=>h.total);
+  hfSet('finish');
+  await hfSay(`오늘 세트를 모두 마쳤어요. 평균 ${Math.round(drAvg(tot))}점이에요. 수고하셨어요.`);
+  if(g!==HF.gen)return;hfStop();
+}
+function hfManual(k){
+  if(!HF.on)return;
+  HF.gen++;hfStopRec();try{ttsStop()}catch(e){}
+  if(k==='stop'){hfStop();return}
+  lockScreen();
+  if(k==='ok'){if((HF.ans||HF.text).trim().length>=2){HF.ans=HF.ans||HF.text;hfSubmit()}else hfAnswer()}
+  else if(k==='redo'){HF.ans='';HF.text='';hfAnswer()}
+  else if(k==='next'){drShowRes=null;hfNext(false)}
+  else if(k==='retry'){hfRetry()}
+  else if(k==='finishNow'){if(HF.state==='listen'&&HF.text.trim().length>=2){HF.ans=HF.text;hfConfirm(true)}else hfAnswer()}
+}
+const HF_LABEL={prompt:['🔊','상대가 말하는 중','잘 듣고 끝나면 내 차례예요'],listen:['🎙','내 차례예요 — 말씀하세요','말이 끝나고 잠깐 멈추면 자동으로 넘어가요. 끝에 "오케이"라고 말하면 바로 채점해요'],confirm:['✅','내용 확인 중','"오케이" = 채점 · "다시" = 다시 말하기'],grade:['🧮','채점 중...','보통 3~10초'],feedback:['💬','피드백을 읽어 드리는 중','끝나면 "다시"/"다음"이라고 말해 주세요'],error:['⚠️','채점 실패','"다시" = 재시도 · "다음" = 건너뛰기'],finish:['🎉','오늘 세트 완료','']};
+function hfRender(){
+  if(!$('hfPanel'))return renderDrill();
+  const l=HF_LABEL[HF.state]||['','',''];
+  $('hfIc').textContent=l[0];$('hfSt').textContent=l[1];$('hfHint').textContent=l[2];
+  $('hfSay').textContent=HF.card?HF.card.say:'';
+  $('hfMsg').textContent=HF.msg||'';hfLive();
+  const show=(id,v)=>{const e=$(id);if(e)e.style.display=v?'':'none'};
+  show('hfOk',HF.state==='confirm'||HF.state==='listen');show('hfRedo',HF.state==='confirm'||HF.state==='listen');
+  show('hfRetry',HF.state==='feedback');show('hfNextB',HF.state==='feedback'||HF.state==='error');
+  const res=$('hfRes');if(res){res.innerHTML='';if(drShowRes&&(HF.state==='feedback')){drRenderResult(res,drShowRes,true)}}
+}
+function hfLive(){const e=$('hfText');if(e)e.textContent=HF.text||(HF.state==='listen'?'(듣는 중...)':'')}
+function drRenderHF(box){
+  const c=mk('div',null,'card');c.id='hfPanel';c.style.border='1px solid #a855f7';
+  const top=mk('div',null,'');top.style.cssText='display:flex;align-items:center;gap:10px';
+  const ic=mk('div','🎧');ic.id='hfIc';ic.style.fontSize='34px';top.appendChild(ic);
+  const tt=mk('div');const st=mk('div','','st-hook');st.id='hfSt';st.style.marginTop='0';tt.appendChild(st);const hn=mk('div','','small');hn.id='hfHint';hn.style.marginTop='2px';tt.appendChild(hn);top.appendChild(tt);c.appendChild(top);
+  c.appendChild(mk('div','상대의 말','dr-ctx'));const sy=mk('div','','dr-bub');sy.id='hfSay';c.appendChild(sy);
+  c.appendChild(mk('div','내가 한 말 (인식된 내용)','dr-ctx'));const tx=mk('div','','dr-mine');tx.id='hfText';tx.style.minHeight='48px';c.appendChild(tx);
+  const ms=mk('div','','small');ms.id='hfMsg';ms.style.whiteSpace='pre-line';c.appendChild(ms);
+  const r=mk('div',null,'dr-row');
+  const b1=mk('button','✅ 오케이','btn main');b1.id='hfOk';b1.onclick=()=>hfManual(HF.state==='listen'?'finishNow':'ok');
+  const b2=mk('button','🔁 다시 말하기','btn sub');b2.id='hfRedo';b2.onclick=()=>hfManual('redo');
+  r.appendChild(b1);r.appendChild(b2);c.appendChild(r);
+  const r2=mk('div',null,'dr-row');
+  const b3=mk('button','🔁 이 문제 다시','btn sub');b3.id='hfRetry';b3.onclick=()=>hfManual('retry');
+  const b4=mk('button','⏭ 다음 문제','btn main');b4.id='hfNextB';b4.onclick=()=>hfManual('next');
+  r2.appendChild(b3);r2.appendChild(b4);c.appendChild(r2);
+  const b5=mk('button','⏹ 핸즈프리 끝내기','btn rd');b5.onclick=()=>hfManual('stop');c.appendChild(b5);
+  c.appendChild(mk('div','화면을 켜 둔 채 크롬이 앞에 있어야 음성 인식이 돼요. 이어폰 마이크를 쓰면 상대 목소리가 다시 인식되는 일이 줄어요.','small'));
+  const res=mk('div');res.id='hfRes';c.appendChild(res);
+  box.appendChild(c);hfRender();
 }
 
 window.onload=()=>{
