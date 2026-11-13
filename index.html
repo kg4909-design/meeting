@@ -217,6 +217,7 @@ details.moreFb{margin-top:10px}details.moreFb>summary{cursor:pointer;font-weight
     <button class="btn sub" style="margin:0 0 4px" onclick="showTab('trivia');tvLoad(()=>window.TV.start())">🧠 오늘의 상식 듣기 (5장 · 2~3분)</button>
     <div class="hero0" id="hero0"><div class="em">☕</div><h3>오늘 만날 사람을 찾아볼까요?</h3><p>랜덤 상대가 정해지고, 실제 있는 장소와<br>요즘 이야기를 검색해서 대화에 반영해요.</p></div>
     <div class="lbl">상황 선택</div><div class="seg" id="segScn"></div><div class="small" id="scnDesc" style="margin-top:6px"></div>
+    <div class="lbl">상대 유형 (연습하고 싶은 사람을 고르거나, 추천에 맡겨요)</div><select id="selTone" style="width:100%;box-sizing:border-box"></select><div class="small" id="toneStat" style="margin-top:6px"></div>
     <div class="lbl">대화 시간 (끝날 때쯤 상대가 자연스럽게 마무리하고 자동 종료돼요)</div><div class="seg" id="segDur" style="flex-wrap:wrap"></div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span class="small" style="margin:0;white-space:nowrap">직접 입력</span><input type="number" id="durCustom" min="3" max="120" step="1" placeholder="3~120" style="width:90px;padding:9px"><span class="small" style="margin:0">분 (5분 단위가 아니어도 돼요)</span></div>
     <div class="mission"><h4>🎯 오늘의 미션 (지난 피드백에서 자동 · 직접 고쳐도 돼요)</h4>
@@ -358,7 +359,26 @@ const MARRY_G=[["1년 안에 결혼하고 싶어 함","1~2년 사이를 생각�
 const DIFF_STARS={"쉬움":"★☆☆","보통":"★★☆","어려움":"★★★"};
 
 /* ================= 페르소나 + 목소리 자동 배정 ================= */
-const TONES=[["외향적·리액션형","웃음이 많고 맞장구를 잘 치며 사소한 공통점에도 즉각 반응함"],["내향적·수줍음형","처음엔 낯을 가려 단답에 가깝지만 편안해지면 서서히 마음을 엶"],["침착·관조형","감정 기복이 적고 담담하며 과장 없이 차분하게 말함"],["시크·현실주의형","분위기 맞추기식 칭찬에 쉽게 동요하지 않고 본인 기준이 뚜렷함"]];
+const TONES=[["외향적·리액션형","웃음이 많고 맞장구를 잘 치며 사소한 공통점에도 즉각 반응함"],["내향적·수줍음형","처음엔 낯을 가려 단답에 가깝지만 편안해지면 서서히 마음을 엶"],["침착·관조형","감정 기복이 적고 담담하며 과장 없이 차분하게 말함"],["시크·현실주의형","분위기 맞추기식 칭찬에 쉽게 동요하지 않고 본인 기준이 뚜렷함"],["장난기·유머형","농담과 가벼운 놀림을 즐기고 분위기를 띄우지만, 진지한 이야기에는 진지하게 받음"],["수다·에너지형","말이 많고 이야기가 옆길로 새기 쉬움. 건 님이 끼어들어 줘야 대화 균형이 맞음"],["진중·사려깊은형","말하기 전에 잠깐 생각하고 천천히 말함. 가벼운 농담엔 미소 정도, 깊은 이야기에 마음을 엶"],["무뚝뚝·리액션 적은형","표정과 리액션이 크지 않고 답이 짧음. 하지만 무례하지는 않고, 관심이 있으면 구체적인 한마디나 되묻기 하나 같은 작은 신호를 줌(그 신호를 알아채는 것이 연습 포인트)"]];
+const MOODS=["평소와 비슷한 컨디션","기분이 좋은 날 — 말이 평소보다 조금 많고 잘 웃음","조금 피곤한 날 — 말이 느리고 짧지만 대화가 싫은 건 아님","살짝 긴장한 날 — 처음엔 조심스럽거나 말이 빠르고, 풀리면 편해짐","일이 바빴던 날 — 일 얘기가 먼저 떠오르고 가끔 시계를 봄"];
+const TONE_NAMES=TONES.map(t=>t[0]);
+/* 유형별 연습 현황(점수가 있는 기록만) */
+function toneStats(){
+  const st={};TONE_NAMES.forEach(n=>st[n]={n:0,sum:0});
+  try{scoredRecords().forEach(r=>{const t=r.p&&r.p.tone;if(st[t]&&typeof r.total==='number'){st[t].n++;st[t].sum+=r.total}})}catch(e){}
+  return st;
+}
+function pickTone(){
+  const mode=CFG.ptype||'auto';
+  if(TONE_NAMES.includes(mode))return TONES.find(t=>t[0]===mode);
+  if(mode==='auto'){
+    /* 적게 만난 유형, 점수가 낮은 유형을 더 자주(그래도 매번 같지 않게 섞음) */
+    const st=toneStats();
+    const w=TONES.map(t=>{const x=st[t[0]];return 1+(x.n===0?2:0)+(x.n>0?Math.max(0,(70-x.sum/x.n))/25:0)});
+    let r=Math.random()*w.reduce((a,b)=>a+b,0);for(let i=0;i<TONES.length;i++){r-=w[i];if(r<=0)return TONES[i]}
+  }
+  return pick(TONES);
+}
 const LEADS=[["주도형","질문보다 본인 이야기와 의견을 먼저 꺼내며 대화를 적극 리드함"],["수용형","주로 질문에 답하며 핑퐁을 잇되 먼저 질문을 많이 던지지는 않음"],["관망형","침묵을 불편해하지 않고 건 님이 물꼬를 터줄 때까지 기다림"]];
 const INTS=[["감성·취향파","전시, 인테리어, 잔잔한 음악, 분위기 좋은 카페/와인바, 여행"],["갓생·성장파","러닝·필라테스 등 운동, 자기계발, 커리어, 재테크, 독서"],["집순이·소확행파","넷플릭스, 반려동물, 집밥 요리, 조용한 힐링"],["활동·아웃도어파","캠핑, 페스티벌, 맛집 탐방, 드라이브, 새로운 경험"]];
 const DIFFS=[["쉬움","초반부터 편안하고 호의적인 신호를 보냄"],["보통","예의 바른 사회생활 톤, 진정성 있는 공감·공통점을 발견하면 무장해제됨"],["보통","예의 바른 사회생활 톤, 진정성 있는 공감·공통점을 발견하면 무장해제됨"],["어려움","상투적 질문·겉도는 칭찬엔 영혼 없는 리액션, 깊은 질문이나 위트에만 반응함"]];
@@ -368,7 +388,7 @@ const HOODS=["서울 성수","서울 연남","서울 한남","서울 종로·익
 "인천 송도","인천 부평","인천 구월동","인천 차이나타운 인근",
 "경기 판교","경기 수원 행궁동","경기 수원 영통","경기 성남 분당 정자동","경기 일산 라페스타 인근","경기 고양 삼송","경기 용인 수지","경기 안양 평촌","경기 부천 상동","경기 하남 미사","경기 광교","경기 의정부"];
 // 목소리: 포럼 보고(개발자 1명 측정)에서 남성 음색으로 튀는 비율이 낮았던 Despina/Leda/Zephyr 위주로만 배정. 보장은 아님.
-const VOICE_MAP={"외향적·리액션형":"Zephyr","내향적·수줍음형":"Leda","침착·관조형":"Despina","시크·현실주의형":"Despina"};
+const VOICE_MAP={"외향적·리액션형":"Zephyr","내향적·수줍음형":"Leda","침착·관조형":"Despina","시크·현실주의형":"Despina","장난기·유머형":"Zephyr","수다·에너지형":"Zephyr","진중·사려깊은형":"Despina","무뚝뚝·리액션 적은형":"Despina"};
 function pickDiff(){
   const S=scoredRecords().slice(-3);let pool;
   if(!S.length)pool=["쉬움","보통","보통"];
@@ -376,10 +396,10 @@ function pickDiff(){
   const n=pick(pool);return DIFFS.find(d=>d[0]===n);
 }
 function makePersona(){
-  const t=pick(TONES),l=pick(LEADS),i=pick(INTS),d=pickDiff(),age=25+Math.floor(Math.random()*12);
+  const t=pickTone(),l=pick(LEADS),i=pick(INTS),d=pickDiff(),age=25+Math.floor(Math.random()*12);
   let voice=VOICE_MAP[t[0]];
   if(age<=28&&Math.random()<.5)voice="Leda";
-  return{name:pick(NAMES),age:age,job:pick(JOBS),tone:t[0],toneD:t[1],lead:l[0],leadD:l[1],int:i[0],intD:i[1],diff:d[0],diffD:d[1],emo:pick(EMOS),marry:MARRY_G.map(pick),voice:voice,place:""};
+  return{name:pick(NAMES),age:age,job:pick(JOBS),tone:t[0],toneD:t[1],lead:l[0],leadD:l[1],int:i[0],intD:i[1],diff:d[0],diffD:d[1],emo:pick(EMOS),mood:pick(MOODS),marry:MARRY_G.map(pick),voice:voice,place:""};
 }
 function avatarColors(name){let h=0;for(const c of name)h=(h*31+c.charCodeAt(0))%360;return[`hsl(${h},62%,46%)`,`hsl(${(h+50)%360},58%,32%)`]}
 
@@ -392,6 +412,12 @@ const BASE=`모든 응답은 반드시 한국어로만 하세요. 건 님은 항
 - 한 턴은 1~3문장으로 짧게 끊습니다. 짧은 리액션으로 먼저 받고 마이크를 넘깁니다. 건 님이 2~3초 생각하는 동안 끼어들지 않습니다.
 [현실감 규칙]
 - 현실의 만남처럼 흐르게 합니다. 아래 [대화 소재 가이드]의 흐름을 참고하되 순서를 억지로 지키지 말고, 건 님이 이끄는 대로 자연스럽게 넘어갑니다. 건 님이 마무리할 때까지 대화를 유지하고, 시간이 흐르는 것을 반영해 음식이 나오거나 음악이 바뀌는 등 주변 상황을 가끔 짧게 언급합니다.
+[사람다움 규칙]
+- 같은 사람처럼 일관되게 행동하되, 실제 사람처럼 완벽하지 않게 말합니다: 가끔 말을 고쳐 말하고("아 아니, 그러니까…"), 생각하다 잠깐 멈추고, 화제가 한 번쯤 옆으로 새고, 대답이 늘 정리돼 있지 않습니다.
+- 리액션의 크기는 [성향]과 [오늘의 컨디션]에 맞게 일정하게 유지합니다. 모든 이야기에 감탄하지 않고, 재미있는 것과 그냥 그런 것에 반응의 차이를 둡니다.
+- 대화가 어색하게 끊기면 억지로 구해 주지 않습니다. 단, [성향]에 맞는 작은 단서(짧은 웃음, 한마디 덧붙임, 시선 돌림 같은 말)는 남겨서 건 님이 풀 수 있게 합니다.
+- 무뚝뚝하거나 리액션이 적은 성향이어도 무례하거나 일부러 대화를 끊지는 않습니다. 호감이 생기면 작고 구체적인 신호(한마디 덧붙이기, 되묻기 하나)로만 드러냅니다.
+- 같은 문장 구조나 같은 맞장구("아 진짜요?")를 반복하지 않습니다.
 [진정성 규칙]
 - 과장된 칭찬·감탄·아부를 하지 않습니다. 좋았으면 "그 얘기 좋네요", "그렇게 말해 주니까 편해요"처럼 담백하게 한 마디만 합니다. "대박", "너무 멋지세요", "천재 같아요" 같은 표현은 쓰지 않습니다.
 - 실제로 마음에 와닿은 말에만 구체적으로 반응합니다(무엇이 좋았는지 짧게). 마음에 안 들거나 어색하면 억지로 맞장구치지 말고 담담하게 넘기거나 솔직하게 "저는 좀 다르게 생각해요" 정도로 말합니다.
@@ -452,7 +478,7 @@ function scenarioText(p){
   return t;
 }
 function buildInstruction(p,memo,real,searchOn){
-  let s=BASE+`\n[이번 상대 프로필. 설정 이름을 입 밖에 내지 말고 행동으로만 드러내세요]\n- 이름 ${p.name}, ${p.age}세, 직업 ${p.job}${p.place?`, 만남 장소 ${p.place}`:''}\n- 성향: ${p.tone} (${p.toneD})\n- 정서 스타일: ${p.emo||'안정형'}\n- 주도성: ${p.lead} (${p.leadD})\n- 관심사: ${p.int} (${p.intD})\n- 호감 진입 난이도: ${p.diff} (${p.diffD})`;
+  let s=BASE+`\n[이번 상대 프로필. 설정 이름을 입 밖에 내지 말고 행동으로만 드러내세요]\n- 이름 ${p.name}, ${p.age}세, 직업 ${p.job}${p.place?`, 만남 장소 ${p.place}`:''}\n- 성향: ${p.tone} (${p.toneD})\n- 정서 스타일: ${p.emo||'안정형'}\n- 오늘의 컨디션: ${p.mood||'평소와 비슷한 컨디션'} (직접 말하지 말고 말투와 속도로만 드러내세요)\n- 주도성: ${p.lead} (${p.leadD})\n- 관심사: ${p.int} (${p.intD})\n- 호감 진입 난이도: ${p.diff} (${p.diffD})`;
   s+=`\n`+scenarioText(p);
   const card=realCard(real);
   s+=`\n`+REAL_RULES+(searchOn?`\n- 실시간 검색 도구가 있습니다. 정말 필요할 때만 쓰고, 길게 말하지 말고 짧게 확인한 뒤 바로 대화로 돌아오세요.`:`\n- 실시간 검색 도구는 없습니다. 모르는 것은 되묻거나 화제를 돌리세요.`);
@@ -479,11 +505,11 @@ SCORES: 자연스러움=n;반응=n;공감=n;주도권=n;자기개방=n;간결성
 ## 4. 이렇게 말했다면 (Before & After)
 가장 아쉬웠던 발화 2개를 골라 [Before 인용] → [After 대체 대사: 간결하고 매력적인 구어체]. 마지막에 "마이크를 끄고 After 문장을 소리 내어 3번 읽어보세요"라고 안내
 ## 5. 호감 곡선
-상대의 호감도(0~10 추정)가 오르거나 내린 결정적 순간 3~5개를 시간순으로. 각각 "▲ 또는 ▼ + 건 님 발화 인용 + 이유 한 줄".
+상대의 호감도(0~10 추정)가 오르거나 내린 결정적 순간 3~5개를 시간순으로. 각각 "▲ 또는 ▼ + 건 님 발화 인용 + 이유 한 줄". 대화가 끊기거나 어색해진 순간이 있었다면 그때 건 님이 어떻게 풀었는지(또는 못 풀었는지)도 한 줄 덧붙입니다.
 ## 6. 상대의 속마음
 상대 캐릭터가 헤어진 뒤 친한 친구에게 털어놓는 편한 말투로 4~5문장. 설렜던 순간, 피곤했던 순간, 애프터 속마음을 솔직하게. 마지막에 "(AI 시뮬레이션 기준)"을 덧붙입니다.
 ## 7. 숨은 설정을 읽었나
-[상대의 숨은 설정](성향, 정서 스타일, 결혼관 등)을 건 님이 얼마나 알아채고 반영했는지 인용 근거와 함께 2~3줄.
+[상대의 숨은 설정](성향, 정서 스타일, 오늘의 컨디션, 결혼관 등)을 건 님이 얼마나 알아채고 반영했는지 인용 근거와 함께 2~3줄. 특히 이 유형에 맞게 말의 속도·질문 양·리액션 크기를 조절했는지, 이 유형에게 다음에 통할 접근 한 가지를 담백하게 적습니다.
 ## 8. 지난번 개선점 적용 여부
 [지난번 개선점]이 주어지면 실제로 시도했는지 인용으로 판정하고, 없으면 '해당 없음'
 ## 다음 대화 개선점
@@ -665,7 +691,7 @@ function parseJsonLoose(t){
 function josaEul(w){const c=(w||'').trim().slice(-1).charCodeAt(0);if(c>=0xAC00&&c<=0xD7A3)return((c-0xAC00)%28)?'을':'를';return'를'}
 function josaRo(w){const c=(w||'').trim().slice(-1).charCodeAt(0);if(c>=0xAC00&&c<=0xD7A3){const f=(c-0xAC00)%28;return(f===0||f===8)?'로':'으로'}return'로'}
 function localProfile(p){
-  const toneBit={"외향적":"처음 보는 사람과도 금방 웃으며 말을 트는 편이에요","내향적":"처음엔 낯을 좀 가리지만 편해지면 말이 늘어요","침착":"차분하게 듣다가 핵심을 짚는 편이에요","유머":"분위기를 가볍게 풀려고 농담을 자주 해요","직설":"좋고 싫음을 솔직하게 말하는 편이에요","감성":"감정과 분위기를 섬세하게 읽는 편이에요","현실":"현실적이고 계획을 세워 움직이는 편이에요","시크":"겉으론 무심해 보여도 속은 따뜻한 편이에요","호기심":"궁금한 건 바로 물어보는 편이에요","털털":"꾸밈없이 편하게 대하는 편이에요"};
+  const toneBit={"외향적":"처음 보는 사람과도 금방 웃으며 말을 트는 편이에요","내향적":"처음엔 낯을 좀 가리지만 편해지면 말이 늘어요","침착":"차분하게 듣다가 핵심을 짚는 편이에요","유머":"분위기를 가볍게 풀려고 농담을 자주 해요","수다":"말이 많고 이야기가 이리저리 번지는 편이에요","진중":"말하기 전에 한 번 생각하고 천천히 말해요","무뚝뚝":"표정과 말수가 많지 않지만 속은 따뜻한 편이에요","직설":"좋고 싫음을 솔직하게 말하는 편이에요","감성":"감정과 분위기를 섬세하게 읽는 편이에요","현실":"현실적이고 계획을 세워 움직이는 편이에요","시크":"겉으론 무심해 보여도 속은 따뜻한 편이에요","호기심":"궁금한 건 바로 물어보는 편이에요","털털":"꾸밈없이 편하게 대하는 편이에요"};
   let tb='';for(const k in toneBit){if((p.tone||'').includes(k)){tb=toneBit[k];break}}
   const hobby=(p.intD||'').split(/[,·]/).map(x=>x.trim()).filter(Boolean).slice(0,3).join(', ');
   const bio=`${p.job}${josaRo(p.job)} 일하는 ${p.age}세 ${p.name}. ${tb||'차분하게 대화를 이어가는 편이에요'}. 쉬는 날엔 ${hobby||'집에서 쉬는 것'}${josaEul(hobby||'집에서 쉬는 것')} 좋아해요. 오늘 첫 만남이 조금 설레고 긴장돼요.`;
@@ -1126,7 +1152,7 @@ function metricsCard(m,prev){
 function revealCard(p,scn){
   const b=mk('div',null,'reveal');
   const row=(k,v)=>{const r=mk('div',null,'row');r.appendChild(mk('b',k));r.appendChild(mk('span',v));b.appendChild(r)};
-  row('성향',p.tone);row('주도성',p.lead);if(p.emo)row('정서 스타일',p.emo);
+  row('성향',p.tone);row('주도성',p.lead);if(p.mood)row('오늘의 컨디션',p.mood.split(' — ')[0]);if(p.emo)row('정서 스타일',p.emo);
   row('난이도',(DIFF_STARS[p.diff]||'')+' '+p.diff);
   if(p.marry&&p.marry.length&&(!scn||scn==='match'))row('결혼관',p.marry.join(' / '));
   if(scn&&SCN[scn])row('상황',SCN[scn].label);
@@ -1204,7 +1230,7 @@ async function genFeedback(id){
     const body=`[상대] ${r.p.name}(${r.p.age}) ${r.p.job}, 성향 ${r.p.tone}/${r.p.lead}/${r.p.int}/난이도 ${r.p.diff}${r.p.place?', 장소 '+r.p.place:''}
 [상황] ${(SCN[r.scn]||SCN.match).label}${r.target?` (목표 ${r.target}분)`:''}
 [평가 관점] ${SCN_LENS[r.scn||'match']}
-[상대의 숨은 설정] 성향: ${r.p.tone}, 정서 스타일: ${r.p.emo||'정보 없음'}, 주도성: ${r.p.lead}, 난이도: ${r.p.diff}${r.p.marry&&(!r.scn||r.scn==='match')?', 결혼관: '+r.p.marry.join(' / '):''}
+[상대의 숨은 설정] 성향: ${r.p.tone}(${r.p.toneD||''}), 정서 스타일: ${r.p.emo||'정보 없음'}, 오늘의 컨디션: ${r.p.mood||'정보 없음'}, 주도성: ${r.p.lead}, 난이도: ${r.p.diff}${r.p.marry&&(!r.scn||r.scn==='match')?', 결혼관: '+r.p.marry.join(' / '):''}
 [객관 지표(앱 자동 계산, 음성인식 기준 근사치)] ${metricsText(ex.m)}
 [지난번 개선점] ${r.memoUsed||"없음"}
 [대화 기록]
@@ -1682,8 +1708,22 @@ function buildSegs(){
   const dc=$('durCustom');if(!DUR_PRE.some(a=>a[0]===CFG.dur))dc.value=CFG.dur;
   refreshSegs();
 }
+function buildToneSel(){
+  const sel=$('selTone');if(!sel)return;sel.innerHTML='';
+  const add=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)};
+  add('auto','🎯 추천 (적게 만났거나 어려웠던 유형 위주)');add('rand','🎲 완전 랜덤');
+  TONES.forEach(t=>add(t[0],t[0]));
+  sel.value=CFG.ptype||'auto';
+  const show=()=>{
+    const st=toneStats();const d=$('toneStat');if(!d)return;
+    const parts=TONE_NAMES.map(n=>{const x=st[n];return x.n?`${n.split('·')[0]} ${x.n}회(평균 ${gradeOf(Math.round(x.sum/x.n)).n})`:`${n.split('·')[0]} 아직`});
+    const cur=TONES.find(t=>t[0]===sel.value);
+    d.textContent=(cur?cur[0]+': '+cur[1]+'\n':'')+'유형별 연습: '+parts.join(' · ');d.style.whiteSpace='pre-line';
+  };
+  sel.onchange=()=>{CFG.ptype=sel.value;LS.set(CK,CFG);show()};show();
+}
 function initCfg(){
-  buildSegs();
+  buildSegs();buildToneSel();
   $('profile').value=CFG.profile||'';$('sens').checked=!!CFG.sens;
   $('profile').addEventListener('input',()=>{CFG.profile=$('profile').value;LS.set(CK,CFG)});
   $('sens').addEventListener('change',()=>{CFG.sens=$('sens').checked;LS.set(CK,CFG)});
