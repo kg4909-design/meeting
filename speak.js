@@ -14,6 +14,26 @@ function sttSupported(){return !!(window.SpeechRecognition||window.webkitSpeechR
 
 /* opts: {title, situation, hint, sample, axes:[{k,name}], rubric, onResult(rec), label}
    box: 그릴 요소. 반환: {stop()} */
+/* 말한 내용을 글상자에 받아 적는 마이크(안드로이드 크롬에서 글자가 겹치지 않게 한 문장씩 받아 직접 이어 붙여요) */
+function makeMic(ta,micB,msg){
+  let rec=null,listening=false,acc='',interim='';
+  function stop(){const was=listening;listening=false;try{if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;rec.stop()}}catch(e){}rec=null;micB.textContent='🎤 말하기 시작';interim='';if(was){ta.value=(acc).trim()||ta.value}}
+  function start(){
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){msg.textContent='이 브라우저는 음성 인식을 지원하지 않아요. 글로 적어 주세요.';return}
+    acc=ta.value.trim();listening=true;micB.textContent='⏹ 말하기 끝';msg.textContent='듣고 있어요... 다 말했으면 "말하기 끝"을 누르세요.';
+    const run=()=>{
+      if(!listening)return;
+      const r=new SR();r.lang='ko-KR';r.interimResults=true;r.continuous=false;rec=r;
+      r.onresult=e=>{let cur='',fin=false;for(let i=0;i<e.results.length;i++){const x=e.results[i];cur+=(cur?' ':'')+x[0].transcript;if(x.isFinal)fin=true}
+        if(fin){acc=(acc+' '+cur).trim();interim=''}else interim=cur.trim();ta.value=(acc+' '+interim).trim()};
+      r.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){msg.textContent='마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요.';stop()}};
+      r.onend=()=>{if(listening)setTimeout(run,150)};
+      try{r.start()}catch(e){}
+    };run();
+  }
+  return{stop:stop,toggle:()=>{if(listening){stop();msg.textContent=''}else start()},isOn:()=>listening};
+}
 function practice(box,opts){
   box.innerHTML='';
   const wrap=mk('div',null,'card');wrap.style.marginTop='10px';
@@ -24,28 +44,14 @@ function practice(box,opts){
   wrap.appendChild(ta);
   const msg=mk('div','','warn');
   const row=mk('div',null,'row');
-  let rec=null,listening=false,acc='',interim='';
   const micB=mk('button','🎤 말하기 시작','btn sub');micB.type='button';
   const goB=mk('button','채점 받기','btn main');goB.type='button';
-  function stopRec(){listening=false;try{if(rec){rec.onend=null;rec.onresult=null;rec.onerror=null;rec.stop()}}catch(e){}rec=null;micB.textContent='🎤 말하기 시작';interim='';ta.value=(acc).trim()||ta.value}
-  function startRec(){
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){msg.textContent='이 브라우저는 음성 인식을 지원하지 않아요. 글로 적어 주세요.';return}
-    acc=ta.value.trim();listening=true;micB.textContent='⏹ 말하기 끝';msg.textContent='듣고 있어요... 다 말했으면 "말하기 끝"을 누르세요.';
-    const run=()=>{
-      if(!listening)return;
-      const r=new SR();r.lang='ko-KR';r.interimResults=true;r.continuous=false;rec=r;
-      r.onresult=e=>{let cur='',fin=false;for(let i=0;i<e.results.length;i++){const x=e.results[i];cur+=(cur?' ':'')+x[0].transcript;if(x.isFinal)fin=true}
-        if(fin){acc=(acc+' '+cur).trim();interim=''}else interim=cur.trim();ta.value=(acc+' '+interim).trim()};
-      r.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed'){listening=false;msg.textContent='마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요.';stopRec()}};
-      r.onend=()=>{if(listening)setTimeout(run,150)};
-      try{r.start()}catch(e){}
-    };run();
-  }
-  micB.onclick=()=>{if(listening){stopRec();msg.textContent=''}else startRec()};
+  const mic=makeMic(ta,micB,msg);
+  const stopRec=()=>mic.stop();
+  micB.onclick=()=>mic.toggle();
   const resBox=mk('div');
   goB.onclick=async()=>{
-    if(listening)stopRec();
+    mic.stop();
     const text=ta.value.trim();
     if(text.length<4){msg.textContent='먼저 한두 문장을 말하거나 적어 주세요.';return}
     goB.disabled=true;micB.disabled=true;msg.textContent='🤖 채점하는 중이에요... (보통 5~20초)';resBox.innerHTML='';
@@ -81,5 +87,5 @@ function practice(box,opts){
   row.appendChild(micB);row.appendChild(goB);wrap.appendChild(row);wrap.appendChild(msg);wrap.appendChild(resBox);box.appendChild(wrap);
   return{stop:stopRec};
 }
-window.SP={practice:practice,levelOf:LVL};
+window.SP={practice:practice,levelOf:LVL,makeMic:makeMic};
 })();
