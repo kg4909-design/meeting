@@ -11,8 +11,7 @@ const WIN=3600e3*12;
 
 /* ---------- 기본 카드: 흔히 알려진 확실한 이야기만(수치·연도 없음). 일상 대화 소재 위주 ---------- */
 function C(n,f,kw,sum,open,qs,links,mine,mistake,qz,sober){
-  const o=qz[1].slice();const a=qz[2];
-  const c={id:"d"+String(n).padStart(2,"0"),f:f,kw:kw,sum:sum,open:open,qs:qs,links:links,mine:mine,mistake:mistake,quiz:{q:qz[0],o:o,a:a,why:qz[3]},seed:1};
+  const c={id:"d"+String(n).padStart(2,"0"),f:f,kw:kw,sum:sum,open:open,qs:qs,links:links,mine:mine,mistake:mistake,seed:1};
   if(sober)c.sober=sober;return c;
 }
 const SEED=[
@@ -83,17 +82,16 @@ function css(){
 }
 
 /* ---------- 상태 ---------- */
-const S={view:'home',busy:false,msg:'',cur:null,rd:{on:false,i:0,ids:[],paused:false},quiz:null,chainKw:'',chainRes:null,prep:null,showAll:false,srcOK:null};
+const S={view:'home',busy:false,msg:'',cur:null,rd:{on:false,i:0,ids:[],paused:false},sp:null,chainKw:'',chainRes:null,prep:null,showAll:false,srcOK:null};
 let root=null;
 function say(t,cls){S.msg=t||'';S.cls=cls||'';const e=document.getElementById('tvMsg');if(e){e.textContent=S.msg;e.className='warn '+(S.cls||'')}}
 
 /* ---------- 카드 만들기 ---------- */
 function cleanCard(c,f,extra){
   const s=v=>typeof v==='string'?v.trim():'';
-  if(!c||!s(c.kw)||!Array.isArray(c.sum)||c.sum.length<3||!c.quiz||!Array.isArray(c.quiz.o)||c.quiz.o.length!==4)return null;
-  const a=Number(c.quiz.a);if(!(a>=0&&a<=3))return null;
-  const out={id:'t'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),f:FIELDS.includes(s(c.f))?s(c.f):(f||'기타'),kw:s(c.kw).slice(0,30),sum:c.sum.slice(0,3).map(s),open:s(c.open),qs:(c.qs||[]).map(s).filter(Boolean).slice(0,2),links:(c.links||[]).map(s).filter(Boolean).slice(0,3),mine:s(c.mine),mistake:s(c.mistake),quiz:{q:s(c.quiz.q),o:c.quiz.o.map(s),a:a,why:s(c.quiz.why)},ts:Date.now()};
-  if(!out.open||out.sum.some(x=>!x)||!out.quiz.q||out.quiz.o.some(x=>!x))return null;
+  if(!c||!s(c.kw)||!Array.isArray(c.sum)||c.sum.length<3)return null;
+  const out={id:'t'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),f:FIELDS.includes(s(c.f))?s(c.f):(f||'기타'),kw:s(c.kw).slice(0,30),sum:c.sum.slice(0,3).map(s),open:s(c.open),qs:(c.qs||[]).map(s).filter(Boolean).slice(0,2),links:(c.links||[]).map(s).filter(Boolean).slice(0,3),mine:s(c.mine),mistake:s(c.mistake),ts:Date.now()};
+  if(!out.open||out.sum.some(x=>!x))return null;
   if(/확인 필요|확실하지 않|정확하지 않/.test(JSON.stringify(c)))return null;
   if(out.f===F_DRINK&&s(c.sober))out.sober=s(c.sober);
   if(out.f===F_DRINK&&/(한잔\s*(해|하자|합시다)|마셔\s*(보세요|봐요)|드셔\s*보세요.*술)/.test(out.open+out.qs.join('')))return null;
@@ -105,12 +103,11 @@ function pickFields(d,n,exclude){
   for(const f of sh){if(!out.includes(f))out.push(f);if(out.length>=n)break}
   return out;
 }
-const SCHEMA=`{"cards":[{"f":"분야명","kw":"키워드","sum":["문장1","문장2","문장3"],"open":"꺼내는 한마디","qs":["질문1","질문2"],"links":["키워드1","키워드2","키워드3"],"mine":"내 경험 연결 힌트(한 줄)","mistake":"대화를 망치는 흔한 실수(한 줄)","sober":"(술 분야만)","quiz":{"q":"","o":["","","",""],"a":0,"why":""}}]}`;
+const SCHEMA=`{"cards":[{"f":"분야명","kw":"키워드","sum":["문장1","문장2","문장3"],"open":"꺼내는 한마디","qs":["질문1","질문2"],"links":["키워드1","키워드2","키워드3"],"mine":"내 경험 연결 힌트(한 줄)","mistake":"대화를 망치는 흔한 실수(한 줄)","sober":"(술 분야만)"}]}`;
 const STYLE=`[말투] 부드러운 존댓말. 요약 3줄은 각 한 문장이고, 마지막 줄은 듣는 사람이 "오, 그래요?" 하고 궁금해할 흥미로운 사실. '꺼내는 한마디'는 상대 입장에서 부담 없는 짧은 질문. 열린 질문은 상대의 경험·취향을 묻는 것(정답이 있거나 시험하듯 묻는 질문 금지).
 [소재] 지식 설명이 아니라 일상 대화에서 화제로 꺼내기 좋은 흥미로운 이야기. 과학 이론·기술 설명은 피하세요.
 [술 분야] 음주 권유·미화 금지. sober 필드에 "잘 안 마시는 사람으로서 이어가는 한마디"를 1~2문장으로.
 [스포츠] 점수·기록 암기보다 응원 팀·직관 경험을 묻는 질문을 우선.
-[퀴즈] 4지선다 1개, 정답 인덱스 a(0~3), why는 한 문장.
 [금지] "(확인 필요)" 같은 불확실 표현을 쓰지 마세요. 검색으로 확실히 확인되지 않는 문장은 아예 빼고 확실한 다른 사실로 대체하세요. 지어낸 인물·수치·인용 금지. 의학·투자는 일반 상식 수준, 단정·권유 금지.`;
 function searchBlocked(){return Date.now()-(LS.get('trv_search_block_at',0)||0)<WIN}
 /* 구글 검색 연동 호출: 검색 출처가 확인된 카드만 돌려줘요. 확인 안 되면 버려요. */
@@ -248,31 +245,27 @@ function startBrief(){
   ensureToday(d).then(day=>{S.rd.ids=day.ids.slice();S.view='brief';S.rd.done=false;try{ttsUnlock()}catch(e){}rdPlay(0)}).catch(e=>say('오류: '+e.message,'bad'));
 }
 
-/* ---------- 퀴즈 ---------- */
-function startQuiz(ids,title){
-  const d=tget();
-  const qs=ids.map(id=>{const c=cardById(d,id);if(!c)return null;const o=c.quiz.o.map((t,i)=>({t:t,ok:i===c.quiz.a}));o.sort(()=>Math.random()-.5);return{id:id,kw:c.kw,q:c.quiz.q,o:o,why:c.quiz.why}}).filter(Boolean);
-  if(!qs.length){say('풀 문제가 없어요.');return}
-  S.quiz={title:title||'퀴즈',qs:qs,i:0,score:0,wrong:[],ans:null};S.view='quiz';render();
+/* ---------- 말하기 연습 (퀴즈 대신: 외운 사실이 아니라 실제로 꺼내 보는 연습) ---------- */
+const SP_AX=[{k:'o',name:'자연스럽게 꺼내기'},{k:'f',name:'사실 한 조각'},{k:'q',name:'질문 넘기기'}];
+const SP_RUBRIC=`[o 자연스럽게 꺼내기] 갑작스럽거나 억지가 아니라 대화 흐름 속 화제로 들어오는가. "혹시 ~ 좋아하세요?"처럼 부담 없는 진입이면 높게.
+[f 사실 한 조각] [참고 요약]의 사실 중 하나를 짧게(한 문장) 곁들였는가. 사실 나열·강의·지식 자랑이면 감점. 사실이 아예 없으면 0~4. 요약에 없는 사실을 지어내면 감점.
+[q 질문 넘기기] 상대의 경험·취향을 묻는 열린 질문 하나로 마무리하는가. 질문 없음·예/아니오 질문·시험하듯 묻기는 낮게, 질문이 2개 이상 연달아면 감점.`;
+function startSpeak(ids,title){
+  const d=tget();const list=ids.filter(id=>cardById(d,id)&&!d.flag[id]);
+  if(!list.length){say('말하기 연습할 카드가 없어요.');return}
+  S.sp={ids:list,i:0,title:title||'오늘의 말하기',scores:[]};S.view='speak';
+  lazyLoad('speak.js',()=>window.SP,()=>render(),()=>say('말하기 모듈을 불러오지 못했어요. 인터넷을 확인해 주세요.','bad'));
 }
-function answerQuiz(k){
-  const Q=S.quiz;if(!Q||Q.ans!=null)return;const q=Q.qs[Q.i];Q.ans=k;
-  const ok=q.o[k].ok;if(ok)Q.score++;else Q.wrong.push(q.id);
-  const d=tget();
-  if(!ok){d.rv[q.id]={n:0,due:dayAdd(1)}}
-  else if(d.rv[q.id]){const r=d.rv[q.id];r.n++;const gap=[1,3,7][r.n];if(gap==null)delete d.rv[q.id];else r.due=dayAdd(gap)}
-  tsave(d);render();
+function spDone(id,total){
+  const d=tget(),k=today();
+  S.sp.scores.push(total);
+  /* 점수가 낮은 카드는 1·3·7일 뒤 다시, 잘하면 간격을 늘려요 */
+  if(total<60){d.rv[id]={n:0,due:dayAdd(1)}}
+  else if(d.rv[id]){const r=d.rv[id];r.n++;const gap=[1,3,7][r.n];if(gap==null)delete d.rv[id];else r.due=dayAdd(gap)}
+  d.spk=d.spk||[];d.spk.push({id:id,ts:Date.now(),t:total});d.spk=d.spk.slice(-200);
+  if(S.sp.title==='오늘의 말하기'&&d.days[k]){const done=S.sp.scores.length;if(done>=S.sp.ids.length){d.days[k].done=true;d.days[k].q={score:Math.round(S.sp.scores.reduce((a,b)=>a+b,0)/S.sp.scores.length),n:S.sp.ids.length}}}
+  tsave(d);
 }
-function nextQuiz(){
-  const Q=S.quiz;Q.i++;Q.ans=null;
-  if(Q.i>=Q.qs.length){
-    const d=tget(),k=today();
-    if(Q.title==='오늘의 퀴즈'&&d.days[k]){d.days[k].done=true;d.days[k].q={score:Q.score,n:Q.qs.length};tsave(d)}
-    S.view='quizEnd'
-  }
-  render();
-}
-
 /* ---------- 카드 표시·동작 ---------- */
 function cardEl(c,d,opt){
   opt=opt||{};
@@ -361,12 +354,12 @@ function homeView(){
   c.appendChild(mk('div','넓고 얕게, 상대에게 질문을 넘기기 위한 교양이에요. 지식 자랑이 아니라 "혹시 ~ 좋아하세요?"를 꺼내는 용도입니다. (후속 질문이 호감을 높인다는 연구: Huang et al., 2017)','sm'));
   c.appendChild(btn('🎧 오늘의 상식 듣기 (5장 · 2~3분)','main',startBrief));
   const stat=[];const rd=reviewDue(d);
-  if(day&&day.done)stat.push('오늘 퀴즈 완료 '+(day.q?day.q.score+'/'+day.q.n:''));
+  if(day&&day.done)stat.push('오늘 말하기 완료'+(day.q?' · 평균 '+(day.q.score>=85?'아주 좋아요':day.q.score>=72?'좋아요':day.q.score>=58?'무난해요':day.q.score>=45?'연습 중이에요':'이제 시작이에요'):''));
   if(rd.length)stat.push('🔁 복습할 카드 '+rd.length+'장');
   if(stat.length)c.appendChild(mk('div',stat.join(' · '),'sm'));
   const row=mk('div',null,'row');
-  if(day&&day.ids.length)row.appendChild(btn('✅ 오늘 퀴즈 5문제','sub',()=>startQuiz(day.ids,'오늘의 퀴즈')));
-  if(rd.length)row.appendChild(btn('🔁 복습 '+rd.length+'장','sub',()=>startQuiz(rd.slice(0,5),'복습 퀴즈')));
+  if(day&&day.ids.length)row.appendChild(btn('🗣 오늘 말하기 5장','sub',()=>startSpeak(day.ids,'오늘의 말하기')));
+  if(rd.length)row.appendChild(btn('🔁 복습 말하기 '+rd.length+'장','sub',()=>startSpeak(rd.slice(0,5),'복습 말하기')));
   c.appendChild(row);
   const m=mk('div',S.msg,'warn '+(S.cls||''));m.id='tvMsg';c.appendChild(m);
   root.appendChild(c);
@@ -412,8 +405,8 @@ function briefView(){
   const h=mk('div',null,'card');
   if(done){
     h.appendChild(mk('h2','🎉 브리핑 끝! 5장을 다 들었어요'));
-    h.appendChild(mk('div','퀴즈로 한 번 확인해 볼까요? (틀린 문제는 1일·3일·7일 뒤 복습)','sm'));
-    h.appendChild(btn('✅ 퀴즈 5문제 풀기','main',()=>{const dd=tget();startQuiz(dd.days[today()].ids,'오늘의 퀴즈')}));
+    h.appendChild(mk('div','듣기만 하면 금방 잊어요. 이제 내 입으로 한 번 꺼내 볼까요? (카드마다 1~2문장이면 돼요)','sm'));
+    h.appendChild(btn('🗣 말하기 5장 해 보기','main',()=>{const dd=tget();startSpeak(dd.days[today()].ids,'오늘의 말하기')}));
     const t=talk('sub');if(t)h.appendChild(t);
     const row=mk('div',null,'row');
     row.appendChild(btn('🔁 다시 듣기','ghost',()=>{rdPlay(0)}));
@@ -432,26 +425,33 @@ function briefView(){
   h.appendChild(row);root.appendChild(h);
   if(c)root.appendChild(cardEl(c,d));
   const nx=mk('div',null,'card');
-  nx.appendChild(btn('✅ 지금 퀴즈 풀기','sub',()=>{rdStop();const dd=tget();startQuiz(dd.days[today()].ids,'오늘의 퀴즈')}));
+  nx.appendChild(btn('🗣 지금 말하기 해 보기','sub',()=>{rdStop();const dd=tget();startSpeak(dd.days[today()].ids,'오늘의 말하기')}));
   const t=talk('sub');if(t)nx.appendChild(t);
   root.appendChild(nx);
 }
-function quizView(){
-  const Q=S.quiz,q=Q.qs[Q.i];
-  const c=mk('div',null,'card');c.appendChild(mk('h2',`${Q.title} ${Q.i+1} / ${Q.qs.length}`));
-  c.appendChild(mk('div',q.kw,'tag'));c.appendChild(mk('div',q.q,'kw')).style.fontSize='16px';
-  q.o.forEach((o,k)=>{const b=mk('button',o.t,'opt');b.type='button';if(Q.ans!=null){if(o.ok)b.classList.add('ok');else if(k===Q.ans)b.classList.add('no')}b.onclick=()=>answerQuiz(k);c.appendChild(b)});
-  if(Q.ans!=null){c.appendChild(mk('div',(q.o[Q.ans].ok?'정답이에요! ':'아쉬워요. ')+q.why,'sec'));c.appendChild(btn(Q.i+1>=Q.qs.length?'결과 보기':'다음 문제','main',nextQuiz))}
-  root.appendChild(c);
-}
-function quizEndView(){
-  const Q=S.quiz,d=tget();
-  const c=mk('div',null,'card');c.appendChild(mk('h2',`결과 ${Q.score} / ${Q.qs.length}`));
-  if(Q.wrong.length){c.appendChild(mk('div','틀린 문제는 1일 · 3일 · 7일 뒤에 다시 나와요: '+Q.wrong.map(id=>(cardById(d,id)||{}).kw).join(', '),'sm'))}
-  else c.appendChild(mk('div','전부 맞췄어요! 이제 "혹시 ~ 좋아하세요?"만 꺼내면 돼요.','sm'));
-  const day=d.days[today()];const first=day&&cardById(d,day.ids[0]);
-  if(first)c.appendChild(btn('💬 궁금한 거 물어보기 (실전 대화로 이어가기)','sub',()=>goTalk(first)));
-  c.appendChild(btn('처음으로','ghost',()=>{S.view='home';render()}));root.appendChild(c);
+function speakView(){
+  const P=S.sp,d=tget();
+  if(P.i>=P.ids.length){
+    const c=mk('div',null,'card');c.appendChild(mk('h2','🎉 말하기 연습 끝!'));
+    const avg=P.scores.length?Math.round(P.scores.reduce((a,b)=>a+b,0)/P.scores.length):0;
+    c.appendChild(mk('div',P.scores.length+'장을 말해 봤어요. 점수는 AI 추정이라 오르내릴 수 있고, 중요한 건 실제 대화에서 한 번 꺼내 보는 거예요. 낮게 나온 카드는 1일·3일·7일 뒤에 다시 나와요.','sm'));
+    c.appendChild(mk('div','이번 평균 등급: '+(avg>=85?'아주 좋아요':avg>=72?'좋아요':avg>=58?'무난해요':avg>=45?'연습 중이에요':'이제 시작이에요'),'sec'));
+    const first=cardById(d,P.ids[0]);
+    if(first)c.appendChild(btn('💬 실전 대화에서 꺼내 보기','sub',()=>goTalk(first)));
+    c.appendChild(btn('처음으로','ghost',()=>{S.view='home';render()}));root.appendChild(c);return;
+  }
+  const c=cardById(d,P.ids[P.i]);
+  const h=mk('div',null,'card');h.appendChild(mk('h2',`🗣 ${P.title} ${P.i+1} / ${P.ids.length}`));
+  const bar=mk('div',null,'bar');const bi=mk('i');bi.style.width=((P.i+1)/P.ids.length*100)+'%';bar.appendChild(bi);h.appendChild(bar);
+  h.appendChild(mk('div',c.f+' · '+c.kw,'tag'));root.appendChild(h);
+  const box=mk('div');root.appendChild(box);
+  const summary=c.sum.map(noChk).join(' ');
+  const sit=`키워드: ${c.kw}\n카페에서 이야기하다가 이 주제가 자연스럽게 나왔다고 생각하고, 1~2문장으로 말해 보세요.\n① 화제를 자연스럽게 꺼내기 ② 흥미로운 사실 한 조각 ③ 상대에게 질문 넘기기\n[참고 요약] ${summary}`;
+  if(!window.SP){box.appendChild(mk('div','불러오는 중...','sm'));return}
+  window.SP.practice(box,{title:'',situation:sit,hint:'요약은 보면서 말해도 돼요. 읽지 말고 내 말로 바꿔 보세요.',sample:c.open+' '+(c.qs[0]||''),axes:SP_AX,rubric:SP_RUBRIC,
+    onResult:rec=>spDone(c.id,rec.total),
+    nextBtn:()=>{const b=btn(P.i+1>=P.ids.length?'결과 보기':'다음 카드 →','main',()=>{P.i++;render();window.scrollTo(0,0)});return b}});
+  const sk=btn('이 카드 건너뛰기','ghost',()=>{P.i++;render()});root.appendChild(sk);
 }
 function chainView(){
   const c=mk('div',null,'card');c.appendChild(mk('h2','🔗 키워드 사슬'));
@@ -489,10 +489,10 @@ function allView(){
 }
 function render(){
   if(!root)return;clear();
-  ({home:homeView,brief:briefView,quiz:quizView,quizEnd:quizEndView,chain:chainView,prep:prepView,all:allView}[S.view]||homeView)();
+  ({home:homeView,brief:briefView,speak:speakView,chain:chainView,prep:prepView,all:allView}[S.view]||homeView)();
 }
 window.TV={
-  open(){root=document.getElementById('tvRoot');if(!root)return;css();S.view=S.rd.on?'brief':(S.view==='quiz'||S.view==='quizEnd'?S.view:'home');render()},
+  open(){root=document.getElementById('tvRoot');if(!root)return;css();S.view=S.rd.on?'brief':(S.view==='speak'?S.view:'home');render()},
   start(){root=document.getElementById('tvRoot');css();if(S.view!=='brief')render();startBrief()},
   cards(){return allCards(tget())},
   merge(src){ // 백업 불러오기용

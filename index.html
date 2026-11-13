@@ -170,6 +170,10 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 .st-tr{font-size:12px;color:var(--mu);margin-top:6px;white-space:pre-wrap}
 
 
+
+.tot .num.g1{color:#f87171}.tot .num.g2{color:#fbbf24}.tot .num.g3{color:#e2e8f0}.tot .num.g4{color:#86efac}.tot .num.g5{color:#4ade80}
+.tot .num{font-size:26px}
+details.moreFb{margin-top:10px}details.moreFb>summary{cursor:pointer;font-weight:700;padding:10px 12px;background:var(--sf2);border-radius:12px;font-size:14px}
 </style></head><body><div class="app">
 
 <div class="top"><div class="logo">💗 첫만남</div><button class="gear" onclick="$('setPanel').classList.toggle('hide')" aria-label="설정">⚙️</button></div>
@@ -183,7 +187,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
   <label>상대가 알고 있는 내 정보 (프로필)</label>
   <textarea id="profile" style="min-height:64px" placeholder="예: 35세, 초등학교 교사 겸 작가 …"></textarea>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="sens" style="width:auto"> 민감한 질문 연습 (결정사 모드에서 이전 관계·이별 사유를 한 번 물어봐요)</label>
-  <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="srch" style="width:auto"> 실제 장소·곡 검색 사용 (끄면 검색 없이 프로필 설정만 AI가 만들어요)</label>
+  <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="srch" style="width:auto"> 실제 장소·곡 검색 사용 (켜면 시작이 느려질 수 있어요. 끄면 검색 없이 프로필 설정만 AI가 만들어요)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="ttsOn" style="width:auto"> 피드백이 나오면 음성으로 자동으로 읽어주기 (운전·걷기용)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="rbLink" style="width:auto"> 드릴 5문제를 끝내면 100일 리부트의 '대화 연습 1회'를 자동 체크</label>
   <label>읽는 범위</label><select id="ttsScope"><option value="sum">핵심 요약 (점수·잘한 점·아쉬운 점·고칠 점)</option><option value="full">전체 (Before/After, 호감 곡선, 속마음 포함)</option></select>
@@ -257,6 +261,8 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 
 <!-- ===== 기록 ===== -->
 <section id="paneRec" class="hide">
+  <button class="btn sub" type="button" style="margin:0 0 8px" onclick="rfOpen()">📝 실제 만남 회고 쓰기 · 보기</button>
+  <div id="rfRoot"></div>
   <h2>지난 기록</h2>
   <div id="recList"></div>
   <div class="row2"><button class="btn sub" onclick="exportJson()">⬇ 백업 파일 저장</button><button class="btn sub" onclick="$('impFile').click()">⬆ 백업 불러오기</button></div>
@@ -277,6 +283,8 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 
 <!-- ===== 훈련: 3분 드릴 ===== -->
 <section id="paneDrill" class="hide">
+  <button class="btn sub" type="button" style="margin:0 0 8px" onclick="thxOpen()">🙏 구체적 인정·감사 말하기 연습</button>
+  <div id="thxRoot"></div>
   <div class="dr-top">
     <div class="dr-stat"><b id="drStreak">0일</b><span>연속 완료</span></div>
     <div class="dr-stat"><b id="drToday">0/5</b><span>오늘 진행</span></div>
@@ -328,6 +336,8 @@ const pick=a=>a[Math.floor(Math.random()*a.length)];
 function mk(tag,text,cls){const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e}
 const CK="sim_cfg_v1";
 let CFG=Object.assign({scn:"match",dur:20,sens:true,profile:"35세 초등학교 교사 겸 작가"},LS.get(CK,{}));
+/* 장소·곡 검색은 시작이 느려지고 실패가 잦아 기본값을 끔(한 번만 이전, 설정에서 다시 켤 수 있어요) */
+if(!CFG.searchMig){CFG.search=false;CFG.searchMig=1;try{LS.set(CK,CFG)}catch(e){}}
 const SCN={
   match:{label:"결정사 첫 만남",desc:"결혼을 전제로 한 진지한 첫 만남이에요. 중반 이후 결혼관 이야기가 자연스럽게 나올 수 있어요."},
   date:{label:"소개팅",desc:"지인 소개로 만난 가벼운 첫 소개팅이에요. 결혼 이야기는 내가 꺼내지 않으면 나오지 않아요."},
@@ -472,7 +482,7 @@ SCORES: 자연스러움=n;반응=n;공감=n;주도권=n;자기개방=n;간결성
 ## 8. 지난번 개선점 적용 여부
 [지난번 개선점]이 주어지면 실제로 시도했는지 인용으로 판정하고, 없으면 '해당 없음'
 ## 다음 대화 개선점
-반드시 이 제목으로, 반드시 맨 마지막에, 3개 이내의 불릿(각 한 줄, 다음 대화에서 바로 실행할 구체적 행동)만 작성`;
+반드시 이 제목으로, 반드시 맨 마지막에, 정확히 1개의 불릿(가장 효과가 큰 한 가지를 다음 대화에서 바로 실행할 구체적 행동 한 줄로)만 작성. 여러 개를 나열하지 마세요`;
 
 const OVERALL_RULES=`당신은 소개팅 대화 코치입니다. 사용자(건 님, 35세 남성 초등교사 겸 작가)의 여러 연습 대화 기록(날짜순, 점수·지난 개선점·피드백 요약 포함)을 보고 종합 판단을 합니다.
 규칙: (1) 주어진 기록에 있는 내용만 근거로 삼고 지어내지 않습니다. 근거에는 반드시 날짜(몇 번째 대화)를 적습니다. (2) 기록이 3회 미만이면 '데이터가 적어 잠정 판단'임을 첫 줄에 밝힙니다. (3) 점수 변화는 AI 채점이라 오차가 있음을 한 문장으로 언급하고, 점수보다 반복되는 패턴을 우선합니다. (4) 근거 없는 칭찬 금지.
@@ -516,10 +526,19 @@ function showTab(t){
   window.scrollTo({top:0});
 }
 /* '오늘의 상식' 탭 코드는 탭을 처음 열 때만 불러와요 (trivia.js) */
+/* 필요한 기능 파일만 그때그때 불러오는 공통 함수 */
+const lazyP={};
+function lazyLoad(file,isReady,ok,fail){
+  try{if(isReady()){ok&&ok();return}}catch(e){}
+  if(!lazyP[file]){lazyP[file]=new Promise((res,rej)=>{const sc=document.createElement('script');sc.src=file+'?v=5';sc.onload=res;sc.onerror=()=>{delete lazyP[file];rej(new Error(file+'를 불러오지 못했어요'))};document.head.appendChild(sc)})}
+  lazyP[file].then(()=>ok&&ok()).catch(e=>{if(fail)fail(e);else console.error(e)});
+}
+function thxOpen(){lazyLoad('speak.js',()=>window.SP,()=>lazyLoad('thanks.js',()=>window.TH,()=>window.TH.open(),e=>alert(e.message)),e=>alert(e.message))}
+function rfOpen(){lazyLoad('reflect.js',()=>window.RF,()=>window.RF.open(),e=>alert(e.message))}
 let tvLoading=null;
 function tvLoad(cb){
   if(window.TV){cb&&cb();return}
-  if(!tvLoading){tvLoading=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='trivia.js?v=4';sc.onload=ok;sc.onerror=()=>{tvLoading=null;no(new Error('trivia.js를 불러오지 못했어요'))};document.head.appendChild(sc)})}
+  if(!tvLoading){tvLoading=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='trivia.js?v=5';sc.onload=ok;sc.onerror=()=>{tvLoading=null;no(new Error('trivia.js를 불러오지 못했어요'))};document.head.appendChild(sc)})}
   tvLoading.then(()=>cb&&cb()).catch(e=>{const r=$('tvRoot');if(r)r.innerHTML='<div class="card small">⚠️ '+e.message+'. 인터넷 연결을 확인하고 다시 눌러 주세요.</div>'});
 }
 function syncMemo(from,to){$(to).value=$(from).value;LS.set(NK,$(from).value)}
@@ -695,7 +714,7 @@ async function gatherReal(p,region,ui,allowSearch){
       out.note=`실제 장소·곡 검색을 쓸 수 없어요 (${explainErr(e.message)}). `;
     }
   }else{
-    out.note=CFG.search===false?"설정에서 검색이 꺼져 있어 프로필 설정만 만들어요. ":"최근 검색이 한도·결제 문제로 거절돼 이번엔 건너뛰어요('🔎 다시 검색'으로 재시도, 12시간 뒤 자동 재시도). ";
+    out.note=!CFG.search?"설정에서 검색이 꺼져 있어 프로필 설정만 만들어요. ":"최근 검색이 한도·결제 문제로 거절돼 이번엔 건너뛰어요('🔎 다시 검색'으로 재시도, 12시간 뒤 자동 재시도). ";
   }
   // 검색 없이 캐릭터 설정(소개·배경·말버릇)만 생성
   try{
@@ -725,7 +744,7 @@ async function findMatch(){
   searchHolder={skipped:false,ctl:null};
   const ui=progUI($('progSearch'));
   let res;
-  try{res=await gatherReal(persona,region,ui,CFG.search!==false&&!searchBlocked)}
+  try{res=await gatherReal(persona,region,ui,CFG.search===true&&!searchBlocked)}
   catch(e){phase('idle');setStatus(`API 오류: ${explainErr(e.message)} · ${e.message.slice(0,140)} ${hint(e.message)}`,"#f87171");return}
   real=res.real;realSources=res.sources;
   if(real&&real.venue)persona.place=real.venue.name+(real.venue.area?` (${real.venue.area})`:'');
@@ -774,7 +793,7 @@ function renderMatch(){
   }else if(!real&&!(matchData&&matchData.note)){b.appendChild(mk('div','이번 상대는 실제 장소·곡 정보 없이 진행돼요.','warn'))}
   if(matchData&&matchData.note)b.appendChild(mk('div',matchData.note,'warn'));
   if(matchData&&matchData.errs&&matchData.errs.length){const d=mk('details');d.appendChild(mk('summary','오류 자세히 보기 (문의할 때 복사해 주세요)'));d.appendChild(mk('pre',matchData.errs.join('\n\n')));b.appendChild(d)}
-  if(CFG.search!==false&&!(real&&real.venue)&&matchData&&matchData.region!==undefined){const rb=mk('button','🔎 실제 장소·곡 다시 검색','btn ghost');rb.onclick=retrySearch;b.appendChild(rb)}
+  if(CFG.search===true&&!(real&&real.venue)&&matchData&&matchData.region!==undefined){const rb=mk('button','🔎 실제 장소·곡 다시 검색','btn ghost');rb.onclick=retrySearch;b.appendChild(rb)}
   box.appendChild(b);
   $('memo2').value=$('memo').value;renderDrills();
   try{renderPrep()}catch(e){}
@@ -788,7 +807,7 @@ async function startCall(){
   if(!API){setStatus("API 키를 입력해 주세요.","#fbbf24");return}
   LS.set(NK,$('memo2').value);$('memo').value=$('memo2').value;
   voice=persona.voice;memoUsed=$('memo2').value.trim();
-  sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=(CFG.search!==false&&!searchBlocked);everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
+  sid=Date.now();lastId=sid;log=[];handle=null;retries=0;userEnded=false;useSearch=(CFG.search===true&&!searchBlocked);everReady=false;tStart=0;wrapSent=false;endingSoon=false;callScn=CFG.scn;callTarget=CFG.dur;
   callStories=snapStories();{const w=drWeak(dget());callFocus=w?(DR_AX.find(a=>a[0]===w)||[])[1]||null:null}
   evts=[];callT0=Date.now();reconnects=0;endKind='user';lastHeard='';evLog('start',{search:useSearch,minutes:callTarget,voice:voice});
   setStatus("마이크 연결 및 서버 접속 중...","#fbbf24");
@@ -1076,7 +1095,7 @@ function scoreBars(sc){
     const v=sc[it.k],r=v/it.max;
     const row=mk('div',null,'irow');row.appendChild(mk('div',it.name,'nm'));
     const tr=mk('div',null,'tr'),fl=mk('div',null,'fl '+(r<0.5?'low':r<0.7?'mid':'hi'));fl.style.width=Math.round(r*100)+'%';tr.appendChild(fl);row.appendChild(tr);
-    row.appendChild(mk('div',`${v}/${it.max}`,'sc'));w.appendChild(row);
+    row.appendChild(mk('div',r<0.5?'보완':r<0.7?'보통':'좋음','sc'));w.appendChild(row);
   });
   return w;
 }
@@ -1118,24 +1137,33 @@ function renderFeedback0(container,raw,ex,final){
   const P=parseReport(raw);
   if(P.scores&&P.total!==null){
     const h=mk('div',null,'hero');const top=mk('div',null,'heroTop');
-    const tot=mk('div',null,'tot');tot.appendChild(mk('span',String(P.total),'num'));tot.appendChild(mk('span',' / 100','of'));top.appendChild(tot);
+    const gr=gradeOf(P.total);
+    const tot=mk('div',null,'tot');tot.appendChild(mk('span',gr.n,'num '+gr.c));top.appendChild(tot);
+    const tn=trendOf(P.total,ex?ex.id:null);
     if(P.verdict)top.appendChild(mk('div','애프터 '+P.verdict,'verdict v-'+P.verdict));
-    h.appendChild(top);h.appendChild(scoreBars(P.scores));container.appendChild(h);
+    h.appendChild(top);if(tn)h.appendChild(mk('div',tn,'small'));h.appendChild(scoreBars(P.scores));h.appendChild(mk('div','AI가 추정한 평가라 대화마다 오르내릴 수 있어요. 숫자 하나보다 흐름을 보세요.','small'));container.appendChild(h);
   }
   const imps=impList(P.next);
   if(imps.length){
     const b=mk('div');imps.forEach((t,i)=>{const it=mk('div',null,'impItem');it.appendChild(mk('div',String(i+1),'n'));it.appendChild(mk('div',t,'t'));b.appendChild(it)});
-    container.appendChild(secCard('🎯 다음 대화에서 고칠 것','imp',b));
+    container.appendChild(secCard(imps.length>1?'🎯 다음 대화에서 고칠 것':'🎯 이번에 딱 1가지','imp',b));
   }
-  if(ex&&ex.m&&ex.m.turns>=2)container.appendChild(metricsCard(ex.m,ex.prev));
-  const defs=[["sum","📋 한눈에 보기",""],["good","👍 잘한 점","good"],["bad","⚠️ 아쉬운 점","bad"],["ba","✍️ 이렇게 말했다면","ba"],["heart","💓 호감 곡선","heart"],["inner","💭 상대의 속마음","inner"],["read","🔎 숨은 설정을 읽었나","read"],["chk","🔁 지난번 개선점 적용 여부","chk"]];
+  /* 핵심(등급·이번 1가지·한눈에 보기·이렇게 말했다면)만 보이고, 나머지는 '자세히 보기'로 접어 둬요 */
+  const defs=[["sum","📋 한눈에 보기","",1],["ba","✍️ 이렇게 말했다면","ba",1],["good","👍 잘한 점","good",0],["bad","⚠️ 아쉬운 점","bad",0],["heart","💓 호감 곡선","heart",0],["inner","💭 상대의 속마음","inner",0],["read","🔎 숨은 설정을 읽었나","read",0],["chk","🔁 지난번 개선점 적용 여부","chk",0]];
+  const more=document.createElement('details');more.className='moreFb';
+  more.appendChild(mk('summary','🔍 자세히 보기 (잘한 점 · 아쉬운 점 · 호감 곡선 · 속마음 · 말버릇 지표)'));
+  let moreN=0;
   defs.forEach(d=>{if(P.secs[d[0]]){
     let body=P.secs[d[0]];
-    if(d[0]==="sum")body=body.split('\n').filter(l=>/이유|판정/.test(l)||!/항목 점수|총점|\d+\s*\/\s*(20|15|10)\b/.test(l)).join('\n');
-    container.appendChild(secCard(d[1],d[2],mdBlock(body)));
+    if(d[0]==="sum")body=body.split('\n').filter(l=>/이유|판정/.test(l)||!/항목 점수|총점|\d+\s*\/\s*(20|15|10)\b/.test(l)).join('\n')
+    if(d[0]==="sum")body=body.replace(/[,，.·]?\s*총점\s*(은|:)?\s*\d+\s*(점|\/\s*100)?/g,'').replace(/\(\s*\)/g,'');
+    const card=secCard(d[1],d[2],mdBlock(body));
+    if(d[3])container.appendChild(card);else{more.appendChild(card);moreN++}
   }});
+  if(ex&&ex.m&&ex.m.turns>=2){more.appendChild(metricsCard(ex.m,ex.prev));moreN++}
+  if(ex&&ex.p&&P.next){more.appendChild(revealCard(ex.p,ex.scn));moreN++}
+  if(moreN)container.appendChild(more);
   if(!Object.keys(P.secs).length&&(raw||"").trim()&&!/^\s*SCORES/.test(raw)){container.appendChild(mk('pre',raw))}
-  if(ex&&ex.p&&P.next)container.appendChild(revealCard(ex.p,ex.scn));
   return P;
 }
 function renderSections(container,raw){
@@ -1204,7 +1232,7 @@ function renderRecs(){
   if(!recs.length){box.appendChild(mk('div','아직 기록이 없어요. 첫 대화를 해보세요!','small'));return}
   recs.slice().reverse().forEach(r=>{
     const d=mk('details');d.dataset.id=String(r.id);
-    const sc=(typeof r.total==='number')?` · ${r.total}점`:'';
+    const sc=(typeof r.total==='number')?` · ${gradeOf(r.total).n}`:'';
     d.appendChild(mk('summary',`${r.date}\n${r.p.name}(${r.p.age}) ${r.p.job}${r.p.place?' · '+r.p.place:''}${sc}${r.report?'':' · 피드백 없음'}`));
     d.firstChild.style.whiteSpace='pre-line';
     const body=mk('div');d.appendChild(body);
@@ -1241,6 +1269,15 @@ function scoredRecords(){
   return recs.filter(r=>r.scores&&typeof r.total==='number');
 }
 const mean=a=>a.reduce((s,v)=>s+v,0)/(a.length||1);
+/* AI가 추정한 점수는 대화마다 오르내릴 수 있어 숫자 대신 등급과 추세로 보여줘요 */
+function gradeOf(t){return t>=85?{n:'아주 좋아요',c:'g5'}:t>=72?{n:'좋아요',c:'g4'}:t>=58?{n:'무난해요',c:'g3'}:t>=45?{n:'연습 중이에요',c:'g2'}:{n:'이제 시작이에요',c:'g1'}}
+function trendOf(total,id){
+  try{const prior=scoredRecords().filter(r=>r.id!==id).slice(-3).map(r=>r.total);
+    if(!prior.length)return '첫 기록이에요. 다음부터 변화를 보여 드려요.';
+    const d=total-mean(prior);
+    return d>=4?'▲ 최근 평균보다 좋아졌어요':d<=-4?'▼ 최근 평균보다 낮았어요':'– 최근 평균과 비슷해요';
+  }catch(e){return ''}
+}
 function deltaSpan(d,unit){
   return mk('span',(d>0.05?'▲ +':d<-0.05?'▼ ':'– ')+(Math.abs(d)<=0.05?'변화 없음':d.toFixed(1)+(unit||'')),d>0.05?'up':d<-0.05?'dn':'eq');
 }
@@ -1265,8 +1302,8 @@ function renderSummary(){
   const k=mk('div',null,'kpis');
   const kp=(v,l,extra)=>{const d=mk('div',null,'kpi');d.appendChild(mk('div',v,'v'));if(extra){const e=mk('div');e.appendChild(extra);d.appendChild(e)}d.appendChild(mk('div',l,'l'));return d};
   k.appendChild(kp(String(S.length),'점수 있는 대화'));
-  k.appendChild(kp(String(last.total),'최근 점수',S.length>1?deltaSpan(last.total-S[S.length-2].total,'점'):null));
-  k.appendChild(kp(avg.toFixed(0),'평균 점수'));
+  k.appendChild(kp(gradeOf(last.total).n,'최근 등급',null));
+  k.appendChild(kp(gradeOf(avg).n,'전체 평균 등급'));
   body.appendChild(k);
   const tcard=mk('div',null,'sec');tcard.appendChild(mk('h3','📈 총점 추세'));
   if(S.length>=2)tcard.appendChild(trendSvg(S));else tcard.appendChild(mk('div','대화가 2회 이상 쌓이면 추세선이 나와요.','small'));
@@ -1524,7 +1561,7 @@ function speechItems(body,budget){
 function buildSpeech(raw,ex,scope){
   const P=parseReport(raw),full=scope==='full',b=full?900:380;
   const S=['이번 대화 피드백이에요.'];
-  if(P.total!==null)S.push(`총점은 ${P.total}점${P.verdict?`, 애프터 판정은 ${P.verdict}입니다.`:'입니다.'}`);
+  if(P.total!==null)S.push(`이번 평가는 ${gradeOf(P.total).n}${P.verdict?`, 애프터 판정은 ${P.verdict}입니다.`:'입니다.'}`);
   if(ex&&ex.m&&ex.m.turns>=2){const m=ex.m;S.push(`습관어는 ${m.perMin!==null?`1분에 ${m.perMin}회`:`${m.fillTotal}회`}, 한 번에 말한 길이는 평균 ${m.avgLen}자였어요.`)}
   if(P.secs.good)S.push('잘한 점이에요. '+speechItems(P.secs.good,b));
   if(P.secs.bad)S.push('아쉬운 점이에요. '+speechItems(P.secs.bad,b));
@@ -1567,7 +1604,7 @@ function fbExtra(r){
   const m=r.metrics||computeMetrics(r.log,r.dur||0);
   const recs=LS.get(RK,[]);const i=recs.findIndex(x=>x.id===r.id);let prev=null;
   for(let k=i-1;k>=0;k--){if(recs[k].log&&userTurns(recs[k].log)>=2){prev=recs[k].metrics||computeMetrics(recs[k].log,recs[k].dur||0);break}}
-  return{m:m,prev:prev,p:r.p,scn:r.scn,stories:r.stories||null,log:r.log};
+  return{id:r.id,m:m,prev:prev,p:r.p,scn:r.scn,stories:r.stories||null,log:r.log};
 }
 function dayKey(ts){const d=new Date(ts);return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()}
 function practiceStats(recs){
@@ -1649,7 +1686,7 @@ function initCfg(){
   $('ttsRate').addEventListener('change',()=>{CFG.ttsRate=Number($('ttsRate').value)||1;LS.set(CK,CFG)});
   $('ttsVoice').addEventListener('change',()=>{CFG.ttsVoice=$('ttsVoice').value;LS.set(CK,CFG)});
   ttsFillVoices();if(hasTTS())speechSynthesis.onvoiceschanged=ttsFillVoices;
-  $('srch').checked=CFG.search!==false;
+  $('srch').checked=CFG.search===true;
   $('srch').addEventListener('change',()=>{CFG.search=$('srch').checked;if(CFG.search){searchBlocked=false;LS.set('search_block_at',0)}LS.set(CK,CFG)});
   $('durCustom').addEventListener('input',()=>{const v=Math.round(Number($('durCustom').value));if(v>=3&&v<=120){CFG.dur=v;LS.set(CK,CFG);refreshSegs()}});
   $('durCustom').addEventListener('change',()=>{let v=Math.round(Number($('durCustom').value));if(v>120)v=120;if(v>=3){CFG.dur=v;LS.set(CK,CFG);$('durCustom').value=v}else $('durCustom').value=DUR_PRE.some(a=>a[0]===CFG.dur)?'':CFG.dur;refreshSegs()});
@@ -1664,7 +1701,7 @@ function rematch(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function exportJson(){
-  const data={v:1,app:'첫만남',records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null)};
+  const data={v:1,app:'첫만남',records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null),reflect:LS.get('reflect_v1',null),thanks:LS.get('thx_v1',null)};
   const b=new Blob([JSON.stringify(data)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='첫만남-백업-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
@@ -1680,6 +1717,8 @@ function importJson(inp){
       if(d.overall&&!LS.get(OK,null))LS.set(OK,d.overall);
       if(d.drill&&typeof d.drill==='object'){const cd=dget(),seen=new Set(cd.hist.map(h=>h.ts));(d.drill.hist||[]).forEach(h=>{if(h&&h.ts&&!seen.has(h.ts)){cd.hist.push(h);n++}});cd.hist.sort((a,b)=>a.ts-b.ts);Object.keys(d.drill.days||{}).forEach(k=>{if(!cd.days[k])cd.days[k]=d.drill.days[k]});dsave(cd)}
       if(d.story&&typeof d.story==='object'){const sd=sget(),ids=new Set(sd.items.map(x=>x.id));(d.story.items||[]).forEach(x=>{if(x&&x.id&&!ids.has(x.id)){sd.items.push(x);n++}});Object.keys(d.story.picks||{}).forEach(k=>{if(!sd.picks[k])sd.picks[k]=d.story.picks[k]});ssave(sd)}
+      if(d.reflect&&typeof d.reflect==='object'){lazyLoad('reflect.js',()=>window.RF,()=>{try{const m=window.RF.merge(d.reflect);if(m)alert(`만남 회고 ${m}건도 불러왔어요.`)}catch(e){console.error(e)}})}
+      if(d.thanks&&typeof d.thanks==='object'&&Array.isArray(d.thanks.hist)){try{const cur=LS.get('thx_v1',null)||{hist:[],seen:{}};const ts=new Set((cur.hist||[]).map(x=>x.ts));d.thanks.hist.forEach(x=>{if(x&&!ts.has(x.ts))cur.hist.push(x)});cur.seen=cur.seen||d.thanks.seen||{};LS.set('thx_v1',cur)}catch(e){console.error(e)}}
       if(d.trivia&&typeof d.trivia==='object'){tvLoad(()=>{try{const m=window.TV.merge(d.trivia);if(m)alert(`상식 카드·기록 ${m}개도 불러왔어요.`)}catch(e){console.error(e)}})}
       renderRecs();alert(`${n}개 기록을 불러왔어요.`);
     }catch(e){alert("백업 파일을 읽지 못했어요.")}
