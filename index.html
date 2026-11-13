@@ -192,6 +192,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
   <label>읽어주는 목소리 (이 기기에 설치된 한국어 음성)</label><select id="ttsVoice"></select>
   <button class="btn ghost" type="button" onclick="ttsPreview()">▶ 미리 듣기</button>
   <div class="small" id="ttsNote"></div>
+  <div class="small" id="ttsModelNote"></div>
   <div class="small">상대의 목소리, 성격, 만날 지역(서울·인천·경기)은 매번 자동으로 정해져요. API 키·기록은 이 브라우저에만 저장되지만, 대화 내용과 위 프로필은 AI 처리를 위해 Google Gemini로 전송돼요. 민감한 개인정보는 필요한 만큼만 적으세요. 상대는 AI가 연기하는 가상 인물이며 실제 사람의 반응과 다를 수 있어요.</div>
 </div>
 
@@ -1397,7 +1398,7 @@ const TTS_MODELS=["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-3.1
 async function geminiTtsPcm(text,gen){
   let last;
   for(const m of gModels(TTS_MODELS)){
-    try{return await geminiTtsPcmWith(m,text,gen)}catch(e){last=e;if(e&&(e.status===404||e.status===400))continue;throw e}
+    try{const r=await geminiTtsPcmWith(m,text,gen);try{LS.set('tts_last_model',m);ttsFillVoices()}catch(_){}return r}catch(e){last=e;if(e&&(e.status===404||e.status===400))continue;throw e}
   }
   throw last||new Error("TTS 모델 없음");
 }
@@ -1541,6 +1542,7 @@ function buildSpeech(raw,ex,scope){
 function ttsPlayCurrent(){if(!TTS.cur)return false;return ttsSay(buildSpeech(TTS.cur.raw,TTS.cur.ex,CFG.ttsScope||'sum'))}
 function ttsPreview(){TTS.cur=null;ttsSay('안녕하세요. 이렇게 피드백을 읽어드릴게요.',{quiet:false})}
 function ttsFillVoices(){
+  try{const mn=$('ttsModelNote');if(mn){const lm=LS.get('tts_last_model','');mn.textContent=lm?`Gemini 음성: 마지막으로 실제 사용된 모델은 ${lm}, 목소리는 ${CFG.ttsGVoice||'Kore'}예요. 피드백 읽기는 소개팅·결정사·일상 대화 모두 이 음성을 써요.`:'Gemini 음성은 아직 사용 기록이 없어요. 한 번 읽어 주면 어떤 모델이 쓰였는지 여기에 표시돼요.'}}catch(e){}
   const sel=$('ttsVoice');if(!sel)return;
   const vs=hasTTS()?koVoices():[];
   sel.innerHTML='';const a=mk('option','자동 선택');a.value='';sel.appendChild(a);
