@@ -159,17 +159,17 @@ function speechOf(c,n,tot){
 function rdStop(){S.rd.on=false;try{ttsStop()}catch(e){}}
 function rdPlay(i){
   const d=tget(),ids=S.rd.ids;
-  if(i>=ids.length){rdStop();S.rd.i=0;say('브리핑이 끝났어요. 아래에서 퀴즈를 풀어 보세요.');render();return}
-  S.rd.on=true;S.rd.paused=false;S.rd.i=i;
+  if(i>=ids.length){rdStop();S.rd.i=ids.length-1;S.rd.done=true;render();window.scrollTo(0,0);return}
+  S.rd.on=true;S.rd.paused=false;S.rd.done=false;S.rd.i=i;
   const c=cardById(d,ids[i]);
   d.seen[c.id]=Date.now();tsave(d);
-  render();
+  render();window.scrollTo(0,0);
   const my=++S.rd.token;
   ttsSay(speechOf(c,i+1,ids.length),{onDone:()=>{if(S.rd.on&&my===S.rd.token)rdPlay(i+1)}});
 }
 function startBrief(){
   const d=tget();S.rd.token=(S.rd.token||0);
-  ensureToday(d).then(day=>{S.rd.ids=day.ids.slice();S.view='brief';try{ttsUnlock()}catch(e){}rdPlay(0)}).catch(e=>say('오류: '+e.message,'bad'));
+  ensureToday(d).then(day=>{S.rd.ids=day.ids.slice();S.view='brief';S.rd.done=false;try{ttsUnlock()}catch(e){}rdPlay(0)}).catch(e=>say('오류: '+e.message,'bad'));
 }
 
 /* ---------- 퀴즈 ---------- */
@@ -290,21 +290,22 @@ function homeView(){
   if(stat.length)c.appendChild(mk('div',stat.join(' · '),'sm'));
   const row=mk('div',null,'row');
   if(day&&day.ids.length)row.appendChild(btn('✅ 오늘 퀴즈 5문제','sub',()=>startQuiz(day.ids,'오늘의 퀴즈')));
-  if(rd.length)row.appendChild(btn('🔁 복습 퀴즈','sub',()=>startQuiz(rd.slice(0,5),'복습 퀴즈')));
+  if(rd.length)row.appendChild(btn('🔁 복습 '+rd.length+'장','sub',()=>startQuiz(rd.slice(0,5),'복습 퀴즈')));
   c.appendChild(row);
   const m=mk('div',S.msg,'warn '+(S.cls||''));m.id='tvMsg';c.appendChild(m);
   root.appendChild(c);
   // 읽어주기 안내
-  const tip=mk('div',null,'card');tip.appendChild(mk('div','🔊 읽어주기는 ⚙️ 설정의 음성 설정(기기 음성 / Gemini 음성, 속도, 목소리)을 그대로 따라요. 화면이 꺼져도 이어지는지는 아래 "화면 꺼짐 확인법"을 따라 해 보세요.','sm'));
-  const dt=mk('details');dt.appendChild(mk('summary','화면 꺼짐 확인법 (갤럭시 S21)'));
+  const tip=mk('div',null,'card');
+  const dt=mk('details');dt.style.marginTop='0';dt.appendChild(mk('summary','🔊 읽어주기 · 화면 꺼짐 확인법 (갤럭시 S21)'));dt.appendChild(mk('div','읽어주기는 ⚙️ 설정의 음성(기기 음성 / Gemini 음성, 속도, 목소리)을 그대로 따라요.','sm'));
   const ol=mk('ol','','sm');['"오늘의 상식 듣기"를 누르고 첫 카드가 읽히기 시작하는지 확인','측면 버튼으로 화면을 끄고 30초 기다리기','소리가 이어지면 OK. 끊기면 ⚙️에서 음성을 "Gemini 음성"으로 바꿔 다시 시도(기기 음성보다 끊김이 적어요 — 단, 기기·환경에 따라 다를 수 있어요)','계속 끊기면 휴대폰 설정 → 배터리에서 크롬(또는 설치한 앱)을 "제한 없음"으로 바꾸기'].forEach(t=>ol.appendChild(mk('li',t)));
   dt.appendChild(ol);tip.appendChild(dt);root.appendChild(tip);
   // 최신 카드
   const L=mk('div',null,'card');L.appendChild(mk('h2','📰 최신 카드(스포츠·트렌드)'));
   const blocked=searchBlocked();
-  L.appendChild(mk('div','구글 검색으로 확인된 내용만, 출처와 기준 날짜를 붙여요. 스포츠는 7일, 트렌드는 30일 뒤 숨겨요. 무료 키에서 검색 연동은 Gemini 2.5 Flash 계열만 하루 500회라고 공식 가격표에 적혀 있어요(Gemini 3 계열은 무료 키 불가). 안 되면 이 기능만 꺼지고 기본 카드는 그대로 써요.','sm'));
+  L.appendChild(mk('div','검색으로 확인된 것만, 출처·기준 날짜와 함께 만들어요. (스포츠 7일 · 트렌드 30일 뒤 숨김)','sm'));
+  const ld=mk('details');ld.appendChild(mk('summary','자세히'));ld.appendChild(mk('div','무료 키에서 검색 연동은 Gemini 2.5 Flash 계열만 하루 500회라고 공식 가격표에 적혀 있어요(Gemini 3 계열은 무료 키 불가). 안 되면 이 기능만 꺼지고 기본 카드는 그대로 써요.','sm'));L.appendChild(ld);
   const lr=mk('div',null,'row');
-  [['⚾ 야구·축구 최신',F_SPORT[0]],['🎮 e스포츠 최신',F_SPORT[1]],['✨ 요즘 트렌드',F_TREND]].forEach(([t,f])=>lr.appendChild(btn(t,'sub',()=>makeLatest(f))));
+  [['⚾ 야구·축구',F_SPORT[0]],['🎮 e스포츠',F_SPORT[1]],['✨ 트렌드',F_TREND]].forEach(([t,f])=>lr.appendChild(btn(t,'sub',()=>makeLatest(f))));
   L.appendChild(lr);
   if(blocked){L.appendChild(mk('div','🔒 최근 검색이 거절돼 잠시 꺼 뒀어요.','warn'));L.appendChild(btn('다시 켜기','ghost',()=>{LS.set('trv_search_block_at',0);render()}))}
   const lat=allCards(d).filter(c=>c.latest&&usable(d,c)).sort((a,b)=>b.ts-a.ts).slice(0,3);
@@ -329,20 +330,34 @@ async function makeLatest(f){
   catch(e){say('최신 카드는 지금 만들 수 없어요: '+String(e.message).slice(0,240)+'\n기본 카드는 그대로 쓸 수 있어요.','bad');render()}
 }
 function briefView(){
-  const d=tget(),ids=S.rd.ids,i=Math.min(S.rd.i,ids.length-1);
+  const d=tget(),ids=S.rd.ids,i=Math.min(S.rd.i,ids.length-1),done=!!S.rd.done;
   const c=cardById(d,ids[i]);
-  const h=mk('div',null,'card');h.appendChild(mk('h2',`🎧 브리핑 ${i+1} / ${ids.length}`));
+  const talk=(btnCls)=>c?btn('💬 궁금한 거 물어보기 (실전 대화로)',btnCls,()=>{rdStop();goTalk(c)}):null;
+  const h=mk('div',null,'card');
+  if(done){
+    h.appendChild(mk('h2','🎉 브리핑 끝! 5장을 다 들었어요'));
+    h.appendChild(mk('div','퀴즈로 한 번 확인해 볼까요? (틀린 문제는 1일·3일·7일 뒤 복습)','sm'));
+    h.appendChild(btn('✅ 퀴즈 5문제 풀기','main',()=>{const dd=tget();startQuiz(dd.days[today()].ids,'오늘의 퀴즈')}));
+    const t=talk('sub');if(t)h.appendChild(t);
+    const row=mk('div',null,'row');
+    row.appendChild(btn('🔁 다시 듣기','ghost',()=>{rdPlay(0)}));
+    row.appendChild(btn('← 처음으로','ghost',()=>{S.view='home';render()}));
+    h.appendChild(row);root.appendChild(h);
+    root.appendChild(mk('div','마지막으로 들은 카드','sm')).style.margin='10px 4px 0';
+    if(c)root.appendChild(cardEl(c,d));
+    return;
+  }
+  h.appendChild(mk('h2',`🎧 브리핑 ${i+1} / ${ids.length}`));
   const bar=mk('div',null,'bar');const bi=mk('i');bi.style.width=((i+1)/ids.length*100)+'%';bar.appendChild(bi);h.appendChild(bar);
   const row=mk('div',null,'row');
-  row.appendChild(btn(S.rd.on?'⏸ 일시정지':'▶ 이어서 듣기','sub',()=>{if(S.rd.on){rdStop();S.rd.paused=true;render()}else rdPlay(S.rd.i)}));
-  row.appendChild(btn('⏭ 다음 카드','sub',()=>{rdStop();rdPlay(S.rd.i+1)}));
-  row.appendChild(btn('⏹ 그만 듣기','rd',()=>{rdStop();S.view='home';render()}));
+  row.appendChild(btn(S.rd.on?'⏸ 정지':'▶ 재생','sub',()=>{if(S.rd.on){rdStop();S.rd.paused=true;render()}else rdPlay(S.rd.i)}));
+  row.appendChild(btn('⏭ 다음','sub',()=>{rdStop();rdPlay(S.rd.i+1)}));
+  row.appendChild(btn('⏹ 종료','rd',()=>{rdStop();S.view='home';render()}));
   h.appendChild(row);root.appendChild(h);
   if(c)root.appendChild(cardEl(c,d));
   const nx=mk('div',null,'card');
-  nx.appendChild(btn('✅ 퀴즈 5문제 풀기','main',()=>{rdStop();const dd=tget();startQuiz(dd.days[today()].ids,'오늘의 퀴즈')}));
-  if(c)nx.appendChild(btn('💬 궁금한 거 물어보기 (실전 대화로 이어가기)','sub',()=>{rdStop();goTalk(c)}));
-  nx.appendChild(btn('← 처음으로','ghost',()=>{rdStop();S.view='home';render()}));
+  nx.appendChild(btn('✅ 지금 퀴즈 풀기','sub',()=>{rdStop();const dd=tget();startQuiz(dd.days[today()].ids,'오늘의 퀴즈')}));
+  const t=talk('sub');if(t)nx.appendChild(t);
   root.appendChild(nx);
 }
 function quizView(){
