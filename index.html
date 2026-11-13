@@ -209,6 +209,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
   </div>
 
   <div id="stIdle">
+    <button class="btn sub" style="margin:0 0 4px" onclick="showTab('trivia');tvLoad(()=>window.TV.start())">🧠 오늘의 상식 듣기 (5장 · 2~3분)</button>
     <div class="hero0" id="hero0"><div class="em">☕</div><h3>오늘 만날 사람을 찾아볼까요?</h3><p>랜덤 상대가 정해지고, 실제 있는 장소와<br>요즘 이야기를 검색해서 대화에 반영해요.</p></div>
     <div class="lbl">상황 선택</div><div class="seg" id="segScn"></div><div class="small" id="scnDesc" style="margin-top:6px"></div>
     <div class="lbl">대화 시간 (끝날 때쯤 상대가 자연스럽게 마무리하고 자동 종료돼요)</div><div class="seg" id="segDur" style="flex-wrap:wrap"></div>
@@ -288,6 +289,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
 </section>
 
 <!-- ===== 훈련: 이야기 은행 ===== -->
+<section id="paneTrivia" class="hide tv"><div id="tvRoot"><div class="card small">불러오는 중...</div></div></section>
 <section id="paneStory" class="hide">
   <div class="card" id="stToday"></div>
   <div class="card">
@@ -310,6 +312,7 @@ select{width:100%;padding:12px;border-radius:12px;border:1px solid var(--ln);bac
   <button class="nb" id="tbSum" onclick="showTab('sum')"><span class="ic">📊</span>분석</button>
   <button class="nb" id="tbDrill" onclick="showTab('drill')"><span class="ic">🎯</span>드릴</button>
   <button class="nb" id="tbStory" onclick="showTab('story')"><span class="ic">📖</span>이야기</button>
+  <button class="nb" id="tbTrivia" onclick="showTab('trivia')"><span class="ic">🧠</span>상식</button>
 </div></div>
 
 <script>
@@ -483,12 +486,20 @@ function phase(p){
   ['Idle','Search','Match','Call'].forEach(n=>$('st'+n).classList.toggle('hide',n.toLowerCase()!==p));
 }
 function showTab(t){
-  ['meet','rec','sum','drill','story'].forEach(n=>{$('pane'+n[0].toUpperCase()+n.slice(1)).classList.toggle('hide',n!==t);$('tb'+n[0].toUpperCase()+n.slice(1)).classList.toggle('on',n===t)});
+  ['meet','rec','sum','drill','story','trivia'].forEach(n=>{$('pane'+n[0].toUpperCase()+n.slice(1)).classList.toggle('hide',n!==t);$('tb'+n[0].toUpperCase()+n.slice(1)).classList.toggle('on',n===t)});
   if(t==='sum')renderSummary();
   if(t==='rec')renderRecs();
   if(t==='drill')renderDrill();
   if(t==='story')renderStory();
+  if(t==='trivia')tvLoad(()=>window.TV.open());
   window.scrollTo({top:0});
+}
+/* '오늘의 상식' 탭 코드는 탭을 처음 열 때만 불러와요 (trivia.js) */
+let tvLoading=null;
+function tvLoad(cb){
+  if(window.TV){cb&&cb();return}
+  if(!tvLoading){tvLoading=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='trivia.js?v=1';sc.onload=ok;sc.onerror=()=>{tvLoading=null;no(new Error('trivia.js를 불러오지 못했어요'))};document.head.appendChild(sc)})}
+  tvLoading.then(()=>cb&&cb()).catch(e=>{const r=$('tvRoot');if(r)r.innerHTML='<div class="card small">⚠️ '+e.message+'. 인터넷 연결을 확인하고 다시 눌러 주세요.</div>'});
 }
 function syncMemo(from,to){$(to).value=$(from).value;LS.set(NK,$(from).value)}
 $('memo').addEventListener('input',()=>syncMemo('memo','memo2'));
@@ -1630,7 +1641,7 @@ function rematch(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function exportJson(){
-  const data={v:1,app:'첫만남',records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null)};
+  const data={v:1,app:'첫만남',records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null)};
   const b=new Blob([JSON.stringify(data)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='첫만남-백업-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
@@ -1646,6 +1657,7 @@ function importJson(inp){
       if(d.overall&&!LS.get(OK,null))LS.set(OK,d.overall);
       if(d.drill&&typeof d.drill==='object'){const cd=dget(),seen=new Set(cd.hist.map(h=>h.ts));(d.drill.hist||[]).forEach(h=>{if(h&&h.ts&&!seen.has(h.ts)){cd.hist.push(h);n++}});cd.hist.sort((a,b)=>a.ts-b.ts);Object.keys(d.drill.days||{}).forEach(k=>{if(!cd.days[k])cd.days[k]=d.drill.days[k]});dsave(cd)}
       if(d.story&&typeof d.story==='object'){const sd=sget(),ids=new Set(sd.items.map(x=>x.id));(d.story.items||[]).forEach(x=>{if(x&&x.id&&!ids.has(x.id)){sd.items.push(x);n++}});Object.keys(d.story.picks||{}).forEach(k=>{if(!sd.picks[k])sd.picks[k]=d.story.picks[k]});ssave(sd)}
+      if(d.trivia&&typeof d.trivia==='object'){tvLoad(()=>{try{const m=window.TV.merge(d.trivia);if(m)alert(`상식 카드·기록 ${m}개도 불러왔어요.`)}catch(e){console.error(e)}})}
       renderRecs();alert(`${n}개 기록을 불러왔어요.`);
     }catch(e){alert("백업 파일을 읽지 못했어요.")}
     inp.value='';
