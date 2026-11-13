@@ -164,16 +164,18 @@ ${STYLE}
 function reviewDue(d){const k=today();return Object.keys(d.rv).filter(id=>d.rv[id].due<=k&&cardById(d,id)&&!d.flag[id])}
 function chooseToday(d){
   const k=today();let day=d.days[k];
-  if(day&&day.ids&&day.ids.length)return day;
+  /* 지난 버전에서 저장된 카드 번호가 지금은 없을 수 있어요 → 없는 카드는 빼고 다시 채워요 */
+  const keep=(day&&day.ids?day.ids:[]).map(id=>cardById(d,id)).filter(c=>c&&usable(d,c)&&!c.latest);
+  if(day&&day.ids&&keep.length>=5)return day;
   const seen=d.seen,usableCards=allCards(d).filter(c=>usable(d,c)&&!c.latest);
   const unseen=usableCards.filter(c=>!seen[c.id]);
-  const chosen=[],usedF=new Set();
+  const chosen=keep.slice(),usedF=new Set(keep.map(c=>c.f));
   const order=pickFields(d,FIELDS.length).sort(()=>Math.random()-.5);
   const pri=f=>unseen.filter(c=>c.f===f).sort((a,b)=>(b.src?1:0)-(a.src?1:0));
-  for(const f of order){if(chosen.length>=5)break;const p=pri(f);if(p.length){chosen.push(p[0]);usedF.add(f)}}
+  for(const f of order){if(chosen.length>=5)break;const p=pri(f).filter(c=>!chosen.includes(c));if(!usedF.has(f)&&p.length){chosen.push(p[0]);usedF.add(f)}}
   // 부족하면 이미 본 카드로 보충(분야 다양성 유지)
   if(chosen.length<5){for(const f of order){if(chosen.length>=5)break;if(usedF.has(f))continue;const p=usableCards.filter(c=>c.f===f&&!chosen.includes(c));if(p.length){chosen.push(p[0]);usedF.add(f)}}}
-  day={ids:chosen.map(c=>c.id),done:false,q:null};
+  day={ids:chosen.map(c=>c.id),done:(day&&day.done&&keep.length===chosen.length)||false,q:(day&&day.q)||null};
   return day;
 }
 async function ensureToday(d){
@@ -218,6 +220,7 @@ function rdPlay(i){
   if(i>=ids.length){rdStop();S.rd.i=ids.length-1;S.rd.done=true;render();window.scrollTo(0,0);return}
   S.rd.on=true;S.rd.paused=false;S.rd.done=false;S.rd.i=i;
   const c=cardById(d,ids[i]);
+  if(!c){rdPlay(i+1);return}
   d.seen[c.id]=Date.now();tsave(d);
   render();window.scrollTo(0,0);
   const my=++S.rd.token;
@@ -240,6 +243,7 @@ function rdPlay(i){
   });
 }
 function startBrief(){
+  say('');
   const d=tget();S.rd.token=(S.rd.token||0);
   ensureToday(d).then(day=>{S.rd.ids=day.ids.slice();S.view='brief';S.rd.done=false;try{ttsUnlock()}catch(e){}rdPlay(0)}).catch(e=>say('오류: '+e.message,'bad'));
 }

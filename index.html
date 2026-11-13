@@ -498,7 +498,7 @@ function showTab(t){
 let tvLoading=null;
 function tvLoad(cb){
   if(window.TV){cb&&cb();return}
-  if(!tvLoading){tvLoading=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='trivia.js?v=3';sc.onload=ok;sc.onerror=()=>{tvLoading=null;no(new Error('trivia.js를 불러오지 못했어요'))};document.head.appendChild(sc)})}
+  if(!tvLoading){tvLoading=new Promise((ok,no)=>{const sc=document.createElement('script');sc.src='trivia.js?v=4';sc.onload=ok;sc.onerror=()=>{tvLoading=null;no(new Error('trivia.js를 불러오지 못했어요'))};document.head.appendChild(sc)})}
   tvLoading.then(()=>cb&&cb()).catch(e=>{const r=$('tvRoot');if(r)r.innerHTML='<div class="card small">⚠️ '+e.message+'. 인터넷 연결을 확인하고 다시 눌러 주세요.</div>'});
 }
 function syncMemo(from,to){$(to).value=$(from).value;LS.set(NK,$(from).value)}
