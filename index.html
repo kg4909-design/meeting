@@ -1129,6 +1129,10 @@ function revealCard(p,scn){
 }
 function renderFeedback(container,raw,ex,final){
   renderFeedback0(container,raw,ex,final);
+  if(final&&ex&&ex.log&&raw&&/##\s*3\./.test(raw)){try{
+    const host=mk('div');host.className='rpHost';const mf=container.querySelector('details.moreFb');mf?container.insertBefore(host,mf):container.appendChild(host);
+    lazyLoad('rephrase.js',()=>window.RP,()=>window.RP.mount(host,ex,raw),()=>{});
+  }catch(e){console.error(e)}}
   if(final&&ex&&ex.stories&&ex.stories.length){try{container.appendChild(storyUsageEl(ex.stories,ex.log))}catch(e){console.error(e)}}
 }
 function renderFeedback0(container,raw,ex,final){
@@ -1504,9 +1508,10 @@ async function ttsGemini(text,opts){
   }catch(e){
     if(gen!==TTS.gen)return true;
     TTS.busy=false;
-    let why=e&&e.status===429?'Gemini 한도 때문에':'Gemini 음성을 못 만들어서';
+    let why=e&&e.status===429?'Gemini 음성 사용 한도가 차서':'Gemini 음성을 못 만들어서';
     if(e&&e.name==='NotAllowedError')why='자동 재생이 막혀서';
-    return ttsBrowser(text,opts,`${why} 기기 음성으로 읽어요. (${String(e&&e.message||e).slice(0,60)})`);
+    try{console.warn('Gemini TTS 실패',e&&e.status,String(e&&e.message||e).slice(0,300))}catch(_){}
+    return ttsBrowser(text,opts,`${why} 이번엔 기기 음성으로 읽어요.${e&&e.status?` (오류 ${e.status})`:''} 한도가 풀리면 다시 Gemini 음성으로 읽어요.`);
   }
 }
 function ttsSay(text,opts){
@@ -2316,8 +2321,9 @@ async function aiJson(system,user,o){
   const hasG=!!gKey(),hasC=!!claudeKey();
   const plan=[];
   const gl=gModels(DR_MODELS).slice(0,3);
-  if(brain!=='claude'&&hasG)gl.forEach(m=>plan.push({p:'g',m:m}));
-  if(brain!=='gemini'&&hasC)CLAUDE_FAST.forEach(m=>plan.push({p:'c',m:m}));
+  const cpl=[];if(brain!=='gemini'&&hasC)(o.claudeModels||CLAUDE_FAST).forEach(m=>cpl.push({p:'c',m:m}));
+  const gpl=[];if(brain!=='claude'&&hasG)gl.forEach(m=>gpl.push({p:'g',m:m}));
+  (o.prefer==='claude'?cpl.concat(gpl):gpl.concat(cpl)).forEach(x=>plan.push(x));
   if(brain==='claude'&&!hasC)throw new Error('Claude API 키가 없어요. ⚙️ 설정에서 입력하거나 AI 두뇌를 바꿔 주세요.');
   if(!plan.length)throw new Error('API 키가 없어요. ⚙️ 설정에서 입력해 주세요.');
   let claudeTried=0;
