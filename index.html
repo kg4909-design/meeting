@@ -215,6 +215,7 @@ details.moreFb{margin-top:10px}details.moreFb>summary{cursor:pointer;font-weight
 
   <div id="stIdle">
     <button class="btn sub" style="margin:0 0 4px" onclick="showTab('trivia');tvLoad(()=>window.TV.start())">🧠 오늘의 상식 듣기 (5장 · 2~3분)</button>
+    <div class="card" id="realBar" style="margin:6px 0 8px"><div class="small" id="realSum" style="margin:0 0 6px"></div><button class="btn main" style="margin:0" onclick="realOpen()">🌱 이번 주 실전 미션 (진짜 사람과 아주 작게)</button><div id="realRoot"></div></div>
     <div class="hero0" id="hero0"><div class="em">☕</div><h3>오늘 만날 사람을 찾아볼까요?</h3><p>랜덤 상대가 정해지고, 실제 있는 장소와<br>요즘 이야기를 검색해서 대화에 반영해요.</p></div>
     <div class="lbl">상황 선택</div><div class="seg" id="segScn"></div><div class="small" id="scnDesc" style="margin-top:6px"></div>
     <div class="lbl">상대 유형 (연습하고 싶은 사람을 고르거나, 추천에 맡겨요)</div><select id="selTone" style="width:100%;box-sizing:border-box"></select><div class="small" id="toneStat" style="margin-top:6px"></div>
@@ -360,6 +361,7 @@ const DIFF_STARS={"쉬움":"★☆☆","보통":"★★☆","어려움":"★★�
 
 /* ================= 페르소나 + 목소리 자동 배정 ================= */
 const TONES=[["외향적·리액션형","웃음이 많고 맞장구를 잘 치며 사소한 공통점에도 즉각 반응함"],["내향적·수줍음형","처음엔 낯을 가려 단답에 가깝지만 편안해지면 서서히 마음을 엶"],["침착·관조형","감정 기복이 적고 담담하며 과장 없이 차분하게 말함"],["시크·현실주의형","분위기 맞추기식 칭찬에 쉽게 동요하지 않고 본인 기준이 뚜렷함"],["장난기·유머형","농담과 가벼운 놀림을 즐기고 분위기를 띄우지만, 진지한 이야기에는 진지하게 받음"],["수다·에너지형","말이 많고 이야기가 옆길로 새기 쉬움. 건 님이 끼어들어 줘야 대화 균형이 맞음"],["진중·사려깊은형","말하기 전에 잠깐 생각하고 천천히 말함. 가벼운 농담엔 미소 정도, 깊은 이야기에 마음을 엶"],["무뚝뚝·리액션 적은형","표정과 리액션이 크지 않고 답이 짧음. 하지만 무례하지는 않고, 관심이 있으면 구체적인 한마디나 되묻기 하나 같은 작은 신호를 줌(그 신호를 알아채는 것이 연습 포인트)"]];
+const SEEDS=["이번 주말 계획","요즘 보고 있는 영상이나 드라마","최근 먹은 것 중 기억에 남는 것","출퇴근길에 있었던 소소한 일","어릴 때 자주 가던 동네나 장소","요즘 몸이 피곤한 이유","최근에 새로 배우거나 시작한 것","가족 모임이나 명절 분위기","좋아하는 계절과 그 이유","요즘 듣는 음악이나 팟캐스트","집 근처 좋아하는 가게","최근에 웃었던 일","요즘 일하면서 느끼는 작은 보람이나 불만","여행 가 본 곳 중 다시 가고 싶은 곳","반려동물이나 키우고 싶은 동물","운동이나 건강 관리 습관","최근에 산 물건 중 만족한 것","학창 시절 기억에 남는 선생님이나 친구","휴일을 보내는 나만의 방식","요즘 고민 중인 사소한 선택"];
 const MOODS=["평소와 비슷한 컨디션","기분이 좋은 날 — 말이 평소보다 조금 많고 잘 웃음","조금 피곤한 날 — 말이 느리고 짧지만 대화가 싫은 건 아님","살짝 긴장한 날 — 처음엔 조심스럽거나 말이 빠르고, 풀리면 편해짐","일이 바빴던 날 — 일 얘기가 먼저 떠오르고 가끔 시계를 봄"];
 const TONE_NAMES=TONES.map(t=>t[0]);
 /* 유형별 연습 현황(점수가 있는 기록만) */
@@ -399,7 +401,7 @@ function makePersona(){
   const t=pickTone(),l=pick(LEADS),i=pick(INTS),d=pickDiff(),age=25+Math.floor(Math.random()*12);
   let voice=VOICE_MAP[t[0]];
   if(age<=28&&Math.random()<.5)voice="Leda";
-  return{name:pick(NAMES),age:age,job:pick(JOBS),tone:t[0],toneD:t[1],lead:l[0],leadD:l[1],int:i[0],intD:i[1],diff:d[0],diffD:d[1],emo:pick(EMOS),mood:pick(MOODS),marry:MARRY_G.map(pick),voice:voice,place:""};
+  return{name:pick(NAMES),age:age,job:pick(JOBS),tone:t[0],toneD:t[1],lead:l[0],leadD:l[1],int:i[0],intD:i[1],diff:d[0],diffD:d[1],emo:pick(EMOS),mood:pick(MOODS),seeds:[...SEEDS].sort(()=>Math.random()-.5).slice(0,3),marry:MARRY_G.map(pick),voice:voice,place:""};
 }
 function avatarColors(name){let h=0;for(const c of name)h=(h*31+c.charCodeAt(0))%360;return[`hsl(${h},62%,46%)`,`hsl(${(h+50)%360},58%,32%)`]}
 
@@ -478,7 +480,7 @@ function scenarioText(p){
   return t;
 }
 function buildInstruction(p,memo,real,searchOn){
-  let s=BASE+`\n[이번 상대 프로필. 설정 이름을 입 밖에 내지 말고 행동으로만 드러내세요]\n- 이름 ${p.name}, ${p.age}세, 직업 ${p.job}${p.place?`, 만남 장소 ${p.place}`:''}\n- 성향: ${p.tone} (${p.toneD})\n- 정서 스타일: ${p.emo||'안정형'}\n- 오늘의 컨디션: ${p.mood||'평소와 비슷한 컨디션'} (직접 말하지 말고 말투와 속도로만 드러내세요)\n- 주도성: ${p.lead} (${p.leadD})\n- 관심사: ${p.int} (${p.intD})\n- 호감 진입 난이도: ${p.diff} (${p.diffD})`;
+  let s=BASE+`\n[이번 상대 프로필. 설정 이름을 입 밖에 내지 말고 행동으로만 드러내세요]\n- 이름 ${p.name}, ${p.age}세, 직업 ${p.job}${p.place?`, 만남 장소 ${p.place}`:''}\n- 성향: ${p.tone} (${p.toneD})\n- 정서 스타일: ${p.emo||'안정형'}\n- 오늘의 컨디션: ${p.mood||'평소와 비슷한 컨디션'} (직접 말하지 말고 말투와 속도로만 드러내세요)\n- 오늘 대화 중 자연스러운 때에 꺼내 볼 수 있는 내 이야기 소재(순서·방식은 자유, 억지로 다 꺼내지 않기): ${(p.seeds||[]).join(' / ')||'자유'}\n- 주도성: ${p.lead} (${p.leadD})\n- 관심사: ${p.int} (${p.intD})\n- 호감 진입 난이도: ${p.diff} (${p.diffD})`;
   s+=`\n`+scenarioText(p);
   const card=realCard(real);
   s+=`\n`+REAL_RULES+(searchOn?`\n- 실시간 검색 도구가 있습니다. 정말 필요할 때만 쓰고, 길게 말하지 말고 짧게 확인한 뒤 바로 대화로 돌아오세요.`:`\n- 실시간 검색 도구는 없습니다. 모르는 것은 되묻거나 화제를 돌리세요.`);
@@ -565,6 +567,16 @@ function lazyLoad(file,isReady,ok,fail){
   lazyP[file].then(()=>ok&&ok()).catch(e=>{if(fail)fail(e);else console.error(e)});
 }
 function thxOpen(){lazyLoad('speak.js',()=>window.SP,()=>lazyLoad('thanks.js',()=>window.TH,()=>window.TH.open(),e=>alert(e.message)),e=>alert(e.message))}
+function realOpen(){lazyLoad('real.js',()=>window.RL,()=>window.RL.open(),e=>alert(e.message))}
+function realSummary(){
+  try{
+    const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));const ws=d.getTime();
+    const rl=(LS.get('real_v1',null)||{}).log||[];const n=rl.filter(x=>x.id>=ws&&x.did!=='no').length;
+    const sim=LS.get(RK,[]).filter(r=>r.id>=ws&&userTurns(r.log)>=2).length;
+    const pend=(LS.get('real_v1',null)||{}).pending;
+    const el=$('realSum');if(el)el.textContent='이번 주: 실전 '+n+'회 · 시뮬 '+sim+'회'+(pend?' · 🕐 해 본 뒤 기록하기를 기다리는 미션이 있어요':'')+'  (실력은 실전에서 늘어요. 시뮬은 그 전 연습장이에요)';
+  }catch(e){}
+}
 function rfOpen(){lazyLoad('reflect.js',()=>window.RF,()=>window.RF.open(),e=>alert(e.message))}
 let tvLoading=null;
 function tvLoad(cb){
@@ -1751,7 +1763,7 @@ function rematch(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function exportJson(){
-  const data={v:1,app:'첫만남',records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null),reflect:LS.get('reflect_v1',null),thanks:LS.get('thx_v1',null)};
+  const data={v:1,app:'첫만남',real:LS.get('real_v1',null),records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null),reflect:LS.get('reflect_v1',null),thanks:LS.get('thx_v1',null)};
   const b=new Blob([JSON.stringify(data)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='첫만남-백업-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
@@ -1767,6 +1779,7 @@ function importJson(inp){
       if(d.overall&&!LS.get(OK,null))LS.set(OK,d.overall);
       if(d.drill&&typeof d.drill==='object'){const cd=dget(),seen=new Set(cd.hist.map(h=>h.ts));(d.drill.hist||[]).forEach(h=>{if(h&&h.ts&&!seen.has(h.ts)){cd.hist.push(h);n++}});cd.hist.sort((a,b)=>a.ts-b.ts);Object.keys(d.drill.days||{}).forEach(k=>{if(!cd.days[k])cd.days[k]=d.drill.days[k]});dsave(cd)}
       if(d.story&&typeof d.story==='object'){const sd=sget(),ids=new Set(sd.items.map(x=>x.id));(d.story.items||[]).forEach(x=>{if(x&&x.id&&!ids.has(x.id)){sd.items.push(x);n++}});Object.keys(d.story.picks||{}).forEach(k=>{if(!sd.picks[k])sd.picks[k]=d.story.picks[k]});ssave(sd)}
+      if(d.real&&typeof d.real==='object'){lazyLoad('real.js',()=>window.RL,()=>{try{const m=window.RL.merge(d.real);if(m)alert(`실전 기록 ${m}건도 불러왔어요.`)}catch(e){console.error(e)}})}
       if(d.reflect&&typeof d.reflect==='object'){lazyLoad('reflect.js',()=>window.RF,()=>{try{const m=window.RF.merge(d.reflect);if(m)alert(`만남 회고 ${m}건도 불러왔어요.`)}catch(e){console.error(e)}})}
       if(d.thanks&&typeof d.thanks==='object'&&Array.isArray(d.thanks.hist)){try{const cur=LS.get('thx_v1',null)||{hist:[],seen:{}};const ts=new Set((cur.hist||[]).map(x=>x.ts));d.thanks.hist.forEach(x=>{if(x&&!ts.has(x.ts))cur.hist.push(x)});cur.seen=cur.seen||d.thanks.seen||{};LS.set('thx_v1',cur)}catch(e){console.error(e)}}
       if(d.trivia&&typeof d.trivia==='object'){tvLoad(()=>{try{const m=window.TV.merge(d.trivia);if(m)alert(`상식 카드·기록 ${m}개도 불러왔어요.`)}catch(e){console.error(e)}})}
@@ -2667,6 +2680,6 @@ window.onload=()=>{
   const k=FIXED_KEY||LS.get(KK,"");if(k)$('apiKey').value=k;
   else $('setPanel').classList.remove('hide');
   const m=LS.get(NK,"")||"";$('memo').value=m;$('memo2').value=m;
-  initCfg();renderDrills();phase('idle');renderRecs();
+  initCfg();realSummary();renderDrills();phase('idle');renderRecs();
 };
 </script></body></html>
