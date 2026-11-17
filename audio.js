@@ -100,7 +100,7 @@ const cuePartner=()=>{beep(520,110);setTimeout(()=>beep(520,110),160)};
 const cueThink=()=>beep(440,90,0.05);
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 
-const S={run:0,on:false,pause:false,stopSay:null,stopListen:null,cmd:null,mins:10,only:'',stat:{},log:[]};
+const S={abort:null,run:0,on:false,pause:false,stopSay:null,stopListen:null,cmd:null,mins:10,only:'',stat:{},log:[]};
 const alive=t=>S.on&&t===S.run;
 function say(text,opts){
   return new Promise(res=>{
@@ -283,8 +283,19 @@ async function runCourse(){
   }catch(e){console.error(e)}
   if(S.run===t){S.on=false;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
 }
-function stopAll(){S.run++;S.on=false;try{S.stopListen&&S.stopListen('stop')}catch(e){}try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
+function stopAll(){S.run++;S.on=false;try{S.abort&&S.abort()}catch(e){}try{S.stopListen&&S.stopListen('stop')}catch(e){}try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
 
+/* ── 자유 대화(턴 방식, 실험) ── */
+async function runTalk(){
+  const t=++S.run;S.on=true;S.stat={};S.log=[];S.cmd=null;
+  try{lockScreen()}catch(e){}
+  try{ttsUnlock()}catch(e){}
+  ui('run','');
+  const ctx={t:t,mins:S.mins,alive:()=>alive(t),ui:ui,say:say,listen:listen,voiceCmd:voiceCmd,closing:closing,
+    setStop:f=>{S.stopSay=f},setAbort:f=>{S.abort=f}};
+  try{await window.TU.talk(ctx)}catch(e){console.error(e);try{await say('대화 중 문제가 생겨서 마칠게요.')}catch(_){}}
+  if(S.run===t){S.on=false;S.abort=null;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
+}
 /* ── 화면 ── */
 let ov=null,els={};
 function css(){
@@ -332,6 +343,11 @@ function build(){
   [['','🎯 오늘의 코스 (약한 기술 위주로 자동 선택)']].concat(SK.map(s=>[s.id,'한 가지만: '+s.name])).forEach(x=>{const o=document.createElement('option');o.value=x[0];o.textContent=x[1];sel.appendChild(o)});
   pre.appendChild(sel);
   [[5,'▶ 5분 코스'],[10,'▶ 10분 코스'],[15,'▶ 15분 코스']].forEach(x=>{const b=mk('button',x[1],'acB '+(x[0]===10?'m':'s'));b.type='button';b.onclick=()=>{S.mins=x[0];S.only=sel.value;try{ttsUnlock()}catch(e){}beep(10,10,0.001);show('run');els.big.textContent='🔊 준비 중';els.sub.textContent='';els.heard.textContent='';els.stage.textContent='';els.rep.textContent='';els.partner.textContent='';runCourse()};pre.appendChild(b)});
+  const tm=document.createElement('select');[[3,'자유 대화 3분'],[5,'자유 대화 5분'],[10,'자유 대화 10분'],[15,'자유 대화 15분']].forEach(x=>{const o=document.createElement('option');o.value=x[0];o.textContent=x[1];if(x[0]===5)o.selected=true;tm.appendChild(o)});pre.appendChild(tm);
+  const tk=mk('button','🗣 자유 대화 (Gemini 목소리 · 실험)','acB s');tk.type='button';
+  tk.onclick=()=>{S.mins=Number(tm.value)||5;try{ttsUnlock()}catch(e){}els.big.textContent='🔊 준비 중';els.sub.textContent='';els.heard.textContent='';els.stage.textContent='';els.rep.textContent='';els.partner.textContent='';show('run');lazyLoad('turn.js',()=>window.TU,runTalk,e=>{alert(e.message);show('pre')})};
+  pre.appendChild(tk);
+  pre.appendChild(mk('div','자유 대화: 내가 말하면 AI가 답 글을 쓰고, 그 글을 Gemini 목소리로 읽어요. 실시간 통화처럼 바로 이어지진 않고 답까지 몇 초 걸려요. 연습 코스와 달리 점수는 없고 끝에 피드백 한 번만 들려줘요.','acDim'));
   const ev=document.createElement('details');ev.appendChild(mk('summary','🔬 이 코스의 근거와 한계'));
   const eb=mk('div');eb.style.cssText='white-space:pre-line;margin-top:8px';
   eb.textContent=SK.map(s=>'· '+s.name+': '+s.ev).join('\n')+'\n· 위 연구들은 실험실·설문 중심이고, 이 앱으로 연습하면 실제 대화가 는다는 직접 증거는 없어요. 그래서 실전 미션 기록을 함께 쓰도록 만들었어요.';
