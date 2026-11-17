@@ -215,6 +215,7 @@ details.moreFb{margin-top:10px}details.moreFb>summary{cursor:pointer;font-weight
 
   <div id="stIdle">
     <button class="btn sub" style="margin:0 0 4px" onclick="showTab('trivia');tvLoad(()=>window.TV.start())">🧠 오늘의 상식 듣기 (5장 · 2~3분)</button>
+    <div class="card" id="acBar" style="margin:6px 0 8px"><button class="btn main" style="margin:0;font-size:18px;padding:16px" onclick="acOpen()">🎧 오디오 코치 · 귀와 입으로만 연습</button><div class="small" style="margin:6px 0 0">운동·운전 중에도 쓸 수 있게 만든 음성 코스예요. 레슨 듣기 → 상대 말에 답하기 → 한 가지 피드백. 시작은 정차·준비 후에 하고, 이후엔 말로만 조작하세요.</div></div>
     <div class="card" id="realBar" style="margin:6px 0 8px"><div class="small" id="realSum" style="margin:0 0 6px"></div><button class="btn main" style="margin:0" onclick="realOpen()">🌱 이번 주 실전 미션 (진짜 사람과 아주 작게)</button><div id="realRoot"></div></div>
     <div class="hero0" id="hero0"><div class="em">☕</div><h3>오늘 만날 사람을 찾아볼까요?</h3><p>랜덤 상대가 정해지고, 실제 있는 장소와<br>요즘 이야기를 검색해서 대화에 반영해요.</p></div>
     <div class="lbl">상황 선택</div><div class="seg" id="segScn"></div><div class="small" id="scnDesc" style="margin-top:6px"></div>
@@ -567,6 +568,7 @@ function lazyLoad(file,isReady,ok,fail){
   lazyP[file].then(()=>ok&&ok()).catch(e=>{if(fail)fail(e);else console.error(e)});
 }
 function thxOpen(){lazyLoad('speak.js',()=>window.SP,()=>lazyLoad('thanks.js',()=>window.TH,()=>window.TH.open(),e=>alert(e.message)),e=>alert(e.message))}
+function acOpen(){try{ttsUnlock()}catch(e){}lazyLoad('audio.js',()=>window.AC,()=>window.AC.open(),e=>alert(e.message))}
 function realOpen(){lazyLoad('real.js',()=>window.RL,()=>window.RL.open(),e=>alert(e.message))}
 function realSummary(){
   try{
