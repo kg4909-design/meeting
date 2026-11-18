@@ -175,7 +175,7 @@ function voiceCmd(t){
 /* ── 평가 ── */
 const SYS=(sk)=>`당신은 한국어 대화 코치입니다. 사용자는 35세 남성 '건 님'이고, 음성으로 한두 문장을 말했습니다(음성 인식 결과라 오탈자는 의미로 해석하세요). 이번 연습 기술: ${sk.name}.
 성공 기준: ${sk.crit}
-판정: done=true는 성공 기준이 사용자 답에 뚜렷이 있을 때만. 같은 답에는 항상 같은 판정. 없는 내용을 있다고 말하지 마세요.
+판정: done=true는 성공 기준이 사용자 답에 뚜렷이 있을 때만. 같은 답에는 항상 같은 판정. 없는 내용을 있다고 말하지 마세요. 추임새(어, 음, 그니까)는 판정과 tweak에서 무시하세요.
 quote: 기준에 맞는 사용자 표현을 그대로 인용(없으면 빈 문자열, 25자 이내).
 tweak: 다음에 한 가지만 고친다면 무엇인지 한 문장(40자 이내, 비난 없이, 이미 충분하면 빈 문자열).
 model: 건 님이 평소 쓸 법한 담백한 해요체 예시 한 문장(50자 안팎). 과장·아부·시적 표현·습관어(되게, 뭔가, 사실, 약간) 금지, 상대 말 속 단어를 활용.
@@ -203,7 +203,7 @@ function fbSpeech(g,tooLong){
 /* ── 한 라운드(기술 1개) ── */
 async function skillRound(t,sk,reps,idx,total){
   const d=aget();
-  ui('stage',`${idx}/${total} · ${sk.name}`);
+  ui('stage',`${sk.name} (${idx}/${total}번째 기술)`);
   await say(sk.lesson,{cache:true});if(!alive(t))return;
   await say(FIXED_PRACTICE,{cache:true});if(!alive(t))return;
   let doneN=0;
@@ -212,7 +212,7 @@ async function skillRound(t,sk,reps,idx,total){
     let tries=0,okRep=false;
     while(tries<2&&alive(t)){
       tries++;
-      ui('rep',`${sk.name} ${k}/${reps}${tries>1?' (한 번 더)':''}`);
+      ui('rep',`연습 ${k}/${reps}${tries>1?' · 한 번 더':''}`);
       cuePartner();await wait(250);if(!alive(t))return;
       ui('partner',ln[0]);
       await say(lineText(sk,ln),{cache:true});if(!alive(t))return;
@@ -295,7 +295,7 @@ async function closing(t){
 
 /* ── 전체 실행 ── */
 async function runCourse(){
-  const t=++S.run;S.on=true;S.stat={};S.log=[];S.cmd=null;
+  const t=++S.run;S.on=true;window.__acOn=true;S.stat={};S.log=[];S.cmd=null;
   try{lockScreen()}catch(e){}
   try{ttsUnlock()}catch(e){}
   const d=aget();
@@ -307,20 +307,20 @@ async function runCourse(){
     for(let i=0;i<plan.length&&alive(t);i++)await skillRound(t,plan[i],reps,i+1,plan.length);
     if(alive(t)&&Object.keys(S.stat).length)await closing(t);
   }catch(e){console.error(e)}
-  if(S.run===t){S.on=false;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
+  if(S.run===t){S.on=false;window.__acOn=false;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
 }
-function stopAll(){S.run++;S.on=false;try{S.abort&&S.abort()}catch(e){}try{S.stopListen&&S.stopListen('stop')}catch(e){}try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
+function stopAll(){S.run++;S.on=false;window.__acOn=false;try{S.abort&&S.abort()}catch(e){}try{S.stopListen&&S.stopListen('stop')}catch(e){}try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
 
 /* ── 자유 대화(턴 방식, 실험) ── */
 async function runTalk(){
-  const t=++S.run;S.on=true;S.stat={};S.log=[];S.cmd=null;
+  const t=++S.run;S.on=true;window.__acOn=true;S.stat={};S.log=[];S.cmd=null;
   try{lockScreen()}catch(e){}
   try{ttsUnlock()}catch(e){}
   ui('run','');
   const ctx={t:t,mins:S.mins,alive:()=>alive(t),ui:ui,say:say,listen:listen,voiceCmd:voiceCmd,closing:closing,
     setStop:f=>{S.stopSay=f},setAbort:f=>{S.abort=f}};
   try{await window.TU.talk(ctx)}catch(e){console.error(e);try{await say('대화 중 문제가 생겨서 마칠게요.')}catch(_){}}
-  if(S.run===t){S.on=false;S.abort=null;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
+  if(S.run===t){S.on=false;window.__acOn=false;S.abort=null;try{ttsStop()}catch(e){}try{unlockScreen()}catch(e){}ui('end','')}
 }
 /* ── 화면 ── */
 let ov=null,els={};
@@ -339,13 +339,13 @@ function css(){
 }
 function ui(kind,txt){
   if(!ov)return;
-  if(kind==='say'){els.big.textContent='🔊 말하는 중';els.sub.textContent=txt.length>160?txt.slice(0,160)+'…':txt}
-  else if(kind==='listen'){els.big.textContent='🎤 말해 주세요';els.heard.textContent=''}
+  if(kind==='say'){els.big.textContent='🔊 말하는 중';const cut=txt.length>160?txt.slice(0,160)+'…':txt;els.sub.textContent=(els.partner.textContent==='상대: '+txt||txt.startsWith('상황입니다.'))?'':cut}
+  else if(kind==='listen'){els.big.textContent='🎤 말해 주세요';els.sub.textContent='';els.heard.textContent=''}
   else if(kind==='heard'){els.heard.textContent=txt}
   else if(kind==='think'){els.big.textContent='🤔 생각 중...'}
   else if(kind==='stage'){els.stage.textContent=txt}
   else if(kind==='rep'){els.rep.textContent=txt}
-  else if(kind==='partner'){els.partner.textContent='상대: '+txt}
+  else if(kind==='partner'){els.partner.textContent='상대: '+txt;els.sub.textContent=''}
   else if(kind==='run'){show('run')}
   else if(kind==='end'){show('end')}
 }
@@ -363,16 +363,17 @@ function build(){
   const pre=mk('div');
   pre.appendChild(mk('div','🎧 오디오 코치','acBig'));
   pre.appendChild(mk('div','귀와 입으로만 연습해요. 레슨을 듣고, 상대 말에 답하고, 한 가지 피드백을 들어요. 화면은 안 봐도 돼요.','acTxt'));
-  const sf=mk('div','⚠️ 운전 중에는 시작 전에 이어폰 연결과 설정을 끝내고, 화면을 만지지 마세요. 이후엔 "다음, 다시, 힌트, 그만"을 말로 하세요. 도로 상황이 우선이에요. 달리기 중에는 바람·소음 때문에 음성 인식이 틀릴 수 있어요. 화면이 꺼지거나 다른 앱으로 가면 음성 인식이 멈출 수 있어요(앱이 화면을 켜 두도록 요청하지만 기기에 따라 다를 수 있어요).','acDim');sf.style.margin='10px 0';pre.appendChild(sf);
+  const sf=mk('div','⚠️ 운전 중에는 시작 전에 준비를 끝내고 화면을 만지지 마세요. 시작 뒤엔 "다음, 다시, 힌트, 그만"을 말로 하세요. 도로 상황이 우선이에요.','acDim');sf.style.margin='10px 0';pre.appendChild(sf);
   if(!hasAI())pre.appendChild(mk('div','AI 키가 없어서 평가는 건너뛰고 예시 문장만 들려 드려요. (⚙️ 설정에서 키를 넣으면 평가가 돼요)','acDim'));
   const sel=document.createElement('select');
-  [['','🎯 오늘의 코스 (약한 기술 위주로 자동 선택)']].concat(SK.map(s=>[s.id,'한 가지만: '+s.name])).forEach(x=>{const o=document.createElement('option');o.value=x[0];o.textContent=x[1];sel.appendChild(o)});
+  [['','🎯 오늘의 코스 (자동 선택)']].concat(SK.map(s=>[s.id,'한 가지만: '+s.name])).forEach(x=>{const o=document.createElement('option');o.value=x[0];o.textContent=x[1];sel.appendChild(o)});
   pre.appendChild(sel);
   [[5,'▶ 5분 코스'],[10,'▶ 10분 코스'],[15,'▶ 15분 코스']].forEach(x=>{const b=mk('button',x[1],'acB '+(x[0]===10?'m':'s'));b.type='button';b.onclick=()=>{S.mins=x[0];S.only=sel.value;try{ttsUnlock()}catch(e){}beep(10,10,0.001);show('run');els.big.textContent='🔊 준비 중';els.sub.textContent='';els.heard.textContent='';els.stage.textContent='';els.rep.textContent='';els.partner.textContent='';runCourse()};pre.appendChild(b)});
   const tm=document.createElement('select');[[3,'자유 대화 3분'],[5,'자유 대화 5분'],[10,'자유 대화 10분'],[15,'자유 대화 15분']].forEach(x=>{const o=document.createElement('option');o.value=x[0];o.textContent=x[1];if(x[0]===5)o.selected=true;tm.appendChild(o)});pre.appendChild(tm);
-  const tk=mk('button','🗣 자유 대화 (Gemini 목소리 · 실험)','acB s');tk.type='button';
+  const tk=mk('button','🗣 자유 대화 시작 (실험)','acB s');tk.type='button';
   tk.onclick=()=>{S.mins=Number(tm.value)||5;try{ttsUnlock()}catch(e){}els.big.textContent='🔊 준비 중';els.sub.textContent='';els.heard.textContent='';els.stage.textContent='';els.rep.textContent='';els.partner.textContent='';show('run');lazyLoad('turn.js',()=>window.TU,runTalk,e=>{alert(e.message);show('pre')})};
   pre.appendChild(tk);
+  pre.appendChild(mk('div','🔎 자세한 주의: 달리기 중에는 바람·소음 때문에 음성 인식이 틀릴 수 있어요. 화면이 꺼지거나 다른 앱으로 가면 음성 인식이 멈출 수 있어요(앱이 화면을 켜 두도록 요청하지만 기기에 따라 다를 수 있어요).','acDim'));
   pre.appendChild(mk('div','자유 대화: 내가 말하면 AI가 답 글을 쓰고, 그 글을 Gemini 목소리로 읽어요. 실시간 통화처럼 바로 이어지진 않고 답까지 몇 초 걸려요. 연습 코스와 달리 점수는 없고 끝에 피드백 한 번만 들려줘요.','acDim'));
   const pf=mk('button','⬇️ 연습 음성 미리 받아 두기 (한도 절약)','acB s');pf.type='button';
   const pfm=mk('div','레슨과 상대 대사 음성을 Gemini에서 한 번만 받아 기기에 저장해요. 저장된 문장은 다시 들어도 한도를 쓰지 않아요. 한도가 차면 거기서 멈춰요. (Gemini 키 필요)','acDim');
