@@ -78,6 +78,9 @@ const SK=[
 ];
 
 /* ── 저장 ── */
+function logAdd(e){const d=aget();d.log=(d.log||[]).concat([e]).slice(-120);asave(d)}
+function logMark(ts,patch){const d=aget();const x=(d.log||[]).find(z=>z.ts===ts);if(x){Object.assign(x,patch);asave(d)}}
+function med(a){a=a.filter(x=>typeof x==='number').sort((x,y)=>x-y);return a.length?a[Math.floor(a.length/2)]:null}
 function aget(){const d=LS.get(KEY,null)||{};d.hist=d.hist||[];d.seen=d.seen||{};d.wins=d.wins||[];return d}
 function asave(d){return LS.set(KEY,d)}
 function rate(d,id){const h=d.hist.filter(x=>x.sk===id).slice(-10);return h.length?h.filter(x=>x.done).length/h.length:0.5}
@@ -107,11 +110,16 @@ async function chas(k){try{const db=await idb();return await new Promise(res=>{c
 async function cput(k,blob){try{const db=await idb();await new Promise(res=>{const tx=db.transaction('c','readwrite');tx.objectStore('c').put(blob,k);tx.oncomplete=()=>res();tx.onerror=()=>res()});
   const ks=await new Promise(res=>{const q=db.transaction('c').objectStore('c').getAllKeys();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>res([])});
   if(ks.length>160){const tx=db.transaction('c','readwrite');ks.slice(0,ks.length-160).forEach(x=>tx.objectStore('c').delete(x))}}catch(e){}}
-const ckey=t=>(CFG.ttsGVoice||'Kore')+'|'+t;
+const engine=()=>CFG.ttsEngine||'gemini';
+const cloud=()=>{const e=engine();return(e==='live'||e==='gemini')&&!!gKey()};
+const cloudOK=()=>engine()==='live'?true:!ttsAllBlocked();
+const ckey=t=>engine()+'|'+(CFG.ttsGVoice||'Kore')+'|'+t;
 const lineText=(sk,ln)=>sk.narr?`상황입니다. ${ln[0]} 이 사람에게 고마움을 한두 문장으로 말해 보세요.`:ln[0];
 const FIXED_PRACTICE='이제 연습해 볼게요. 비프 소리가 나면 말씀하세요. 막히면 힌트, 넘기려면 다음, 끝내려면 그만이라고 하세요.';
 function staticTexts(){const a=[FIXED_PRACTICE];SK.forEach(sk=>{a.push(sk.lesson);sk.lines.forEach(ln=>a.push(lineText(sk,ln)))});return a}
-async function geminiBlob(text){const pcm=await geminiTtsPcm(text,TTS.gen);return pcmToWav(pcm,24000)}
+async function geminiBlob(text){
+  if(engine()==='live'){await liveReady();return pcmToWav(await LV.pcm(text),24000)}
+  const pcm=await geminiTtsPcm(text,TTS.gen);return pcmToWav(pcm,24000)}
 const S={abort:null,run:0,on:false,pause:false,stopSay:null,stopListen:null,cmd:null,mins:10,only:'',stat:{},log:[]};
 const alive=t=>S.on&&t===S.run;
 function say(text,opts){
@@ -122,13 +130,13 @@ function say(text,opts){
     const g=setTimeout(f,20000+text.length*330);
     S.stopSay=()=>{try{ttsStop()}catch(e){}f()};
     ui('say',text);
-    const eng=CFG.ttsEngine||'gemini';
-    if(opts.cache&&eng==='gemini'&&gKey()&&!S.gOff){
+    if(opts.cache&&cloud()&&cloudOK()&&!S.gOff){
       try{
         const k=ckey(text);let blob=await cget(k);
         if(!blob){blob=await geminiBlob(text);cput(k,blob);S.calls=(S.calls||0)+1}
         if(done)return;
         const a=getAudio();const url=URL.createObjectURL(blob);a.src=url;a.playbackRate=Number(CFG.ttsRate)||1;try{a.preservesPitch=true}catch(e){}
+        a.onplaying=()=>{S.sayStart=Date.now()};
         const end=()=>{try{URL.revokeObjectURL(url)}catch(e){}f()};a.onended=end;a.onerror=end;
         S.stopSay=()=>{try{a.pause()}catch(e){}end()};
         await a.play();return;
@@ -169,6 +177,7 @@ function voiceCmd(t){
   if(/^(다음|넘어가|패스|스킵)/.test(n))return'next';
   if(/^(다시|한번더|또)/.test(n))return'repeat';
   if(/^(힌트|예시|모르겠)/.test(n))return'hint';
+  if(/^(이상해|평가가이상|틀렸|아닌데|평가틀)/.test(n))return'bad';
   return null;
 }
 
@@ -209,14 +218,15 @@ async function skillRound(t,sk,reps,idx,total){
   let doneN=0;
   for(let k=1;k<=reps;k++){
     const dd=aget();const ln=pickLine(dd,sk);asave(dd);
-    let tries=0,okRep=false;
+    let tries=0,okRep=false,skipP=false;
     while(tries<2&&alive(t)){
       tries++;
       ui('rep',`연습 ${k}/${reps}${tries>1?' · 한 번 더':''}`);
-      cuePartner();await wait(250);if(!alive(t))return;
+      if(!skipP){cuePartner();await wait(250);if(!alive(t))return;
       ui('partner',ln[0]);
-      await say(lineText(sk,ln),{cache:true});if(!alive(t))return;
-      let lr=await listen({});if(!alive(t))return;
+      await say(lineText(sk,ln),{cache:true});if(!alive(t))return}
+      skipP=false;
+      let lr=await listen({});if(!alive(t))return;const tEnd=Date.now();
       if(lr.err==='perm'){await say('마이크 권한이 필요해요. 브라우저 설정에서 허용한 뒤 다시 시작해 주세요.');S.on=false;return}
       if(lr.err==='nosr'){await say('이 브라우저는 음성 인식을 지원하지 않아요. 크롬에서 열어 주세요.');S.on=false;return}
       let text=(lr.text||'').trim();
@@ -225,17 +235,23 @@ async function skillRound(t,sk,reps,idx,total){
       if(c==='next'){await say('다음으로 갈게요.');break}
       if(c==='hint'){await say(`예를 들면, ${ln[1]}`);tries--;continue}
       if(c==='repeat'){tries--;continue}
+      if(c==='bad'){if(S.lastTs)logMark(S.lastTs,{bad:true});await say('이상한 평가로 표시해 뒀어요.');tries--;skipP=true;continue}
       if(!text){await say('잘 못 들었어요.');if(tries<2)continue;break}
       ui('heard',text);ui('think','');cueThink();
       const tooLong=text.length>150;
-      let g=null;
+      let g=null,aiMs=null;
       if(hasAI()){
-        try{g=await Promise.race([grade(sk,ln[0],text,sk.narr),new Promise((_,rj)=>setTimeout(()=>rj(new Error('timeout')),30000))])}catch(e){g=null}
+        const tg=Date.now();
+        try{g=await Promise.race([grade(sk,ln[0],text,sk.narr),new Promise((_,rj)=>setTimeout(()=>rj(new Error('timeout')),30000))]);aiMs=Date.now()-tg}catch(e){g=null}
         if(!alive(t))return;
       }
       if(g){
         S.log.push({sk:sk.id,done:g.done});
+        const ts=Date.now();S.lastTs=ts;S.sayStart=0;const tS0=Date.now();
+        const ent={ts:ts,sk:sk.id,heard:text.slice(0,160),ai:aiMs,done:g.done,eng:engine(),afterEnd:null};
+        logAdd(ent);
         await say(fbSpeech(g,tooLong));if(!alive(t))return;
+        logMark(ts,{tts:S.sayStart?S.sayStart-tS0:null,total:S.sayStart?S.sayStart-tEnd:null});
         if(g.done){okRep=true;break}
         if(tries<2){await say('한 번 더 해 볼게요.')}
       }else{
@@ -376,19 +392,37 @@ function build(){
   pre.appendChild(mk('div','🔎 자세한 주의: 달리기 중에는 바람·소음 때문에 음성 인식이 틀릴 수 있어요. 화면이 꺼지거나 다른 앱으로 가면 음성 인식이 멈출 수 있어요(앱이 화면을 켜 두도록 요청하지만 기기에 따라 다를 수 있어요).','acDim'));
   pre.appendChild(mk('div','자유 대화: 내가 말하면 AI가 답 글을 쓰고, 그 글을 Gemini 목소리로 읽어요. 실시간 통화처럼 바로 이어지진 않고 답까지 몇 초 걸려요. 연습 코스와 달리 점수는 없고 끝에 피드백 한 번만 들려줘요.','acDim'));
   const pf=mk('button','⬇️ 연습 음성 미리 받아 두기 (한도 절약)','acB s');pf.type='button';
-  const pfm=mk('div','레슨과 상대 대사 음성을 Gemini에서 한 번만 받아 기기에 저장해요. 저장된 문장은 다시 들어도 한도를 쓰지 않아요. 한도가 차면 거기서 멈춰요. (Gemini 키 필요)','acDim');
+  const pfm=mk('div','레슨과 상대 대사 음성을 한 번만 받아 기기에 저장해요. 저장된 문장은 다시 들어도 한도를 쓰지 않아요. Gemini 음성은 분당 3회 한도가 있어 21초 간격으로 받고, 한도가 차면 멈춰요. (설정에서 음성 방식을 Live로 하면 더 빨라요) (Gemini 키 필요)','acDim');
   pf.onclick=async()=>{
     if(!gKey()){pfm.textContent='Gemini 키가 필요해요.';return}
     pf.disabled=true;const all=staticTexts();let have=0,got=0;S.gOff=false;
     for(let i=0;i<all.length;i++){
       pfm.textContent=`받는 중... ${i+1}/${all.length} (새로 받은 것 ${got}개)`;
       const k=ckey(all[i]);if(await chas(k)){have++;continue}
-      try{const b=await geminiBlob(all[i]);await cput(k,b);got++}catch(e){pfm.textContent=`${e&&e.status===429?'Gemini 음성 한도가 차서':'오류로'} 여기서 멈췄어요. 새로 받은 ${got}개, 이미 있던 ${have}개. 한도가 풀리면 다시 눌러 이어서 받을 수 있어요.`;pf.disabled=false;return}
-      await wait(400);
+      if(engine()==='gemini'&&ttsAllBlocked()){pfm.textContent=`Gemini 음성 한도에 걸려서 여기서 멈췄어요. 새로 받은 ${got}개, 이미 있던 ${have}개. 한도가 풀리면(분당은 잠시 뒤, 하루는 다음 날) 다시 눌러 이어서 받으세요.`;pf.disabled=false;return}
+      try{const b=await geminiBlob(all[i]);await cput(k,b);got++}catch(e){pfm.textContent=`${e&&e.status===429?'음성 한도가 차서':'오류로'} 여기서 멈췄어요. 새로 받은 ${got}개, 이미 있던 ${have}개. 한도가 풀리면 다시 눌러 이어서 받을 수 있어요.`;pf.disabled=false;return}
+      await wait(engine()==='gemini'?21000:500);
     }
     pfm.textContent=`끝났어요. 새로 받은 ${got}개, 이미 있던 ${have}개 (총 ${all.length}개)`;pf.disabled=false;
   };
   pre.appendChild(pf);pre.appendChild(pfm);
+  const lg=document.createElement('details');lg.appendChild(mk('summary','📊 내 사용 기록 (속도·인식·평가)'));
+  const lb=mk('div');lb.style.cssText='white-space:pre-line;margin-top:8px;font-size:13px';
+  const fillLog=()=>{
+    const d=aget(),l=d.log||[];const bad=l.filter(x=>x.bad).length;
+    let t=`이 기기에 저장된 기록 ${l.length}건\n`;
+    t+=`평가 만드는 시간(중앙값): ${med(l.map(x=>x.ai))===null?'-':(med(l.map(x=>x.ai))/1000).toFixed(1)+'초'}\n`;
+    t+=`내 말이 끝난 뒤 첫 소리까지(중앙값, Gemini/Live 음성일 때만): ${med(l.map(x=>x.total))===null?'-':(med(l.map(x=>x.total))/1000).toFixed(1)+'초'}\n`;
+    t+=`"이상해요"로 표시한 평가: ${bad}건\n`;
+    const u=ttsUse();t+=`오늘 Gemini 음성 호출 ${ttsUseTotal()}회${ttsAllBlocked()?' · 지금은 모든 모델이 한도에 걸려 기기 음성으로 대신해요':''} (무료 등급은 모델당 하루 약 10회·분당 3회로 표시돼 있었어요)\n\n최근 5건:\n`;
+    t+=l.slice(-5).reverse().map(x=>`· ${new Date(x.ts).toLocaleString('ko-KR',{hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} [${(SK.find(s=>s.id===x.sk)||{name:x.sk}).name}] 인식: ${x.heard} → ${x.done?'잘함':'아쉬움'}${x.bad?' (이상해요)':''}`).join('\n');
+    lb.textContent=t;
+  };
+  fillLog();lg.addEventListener('toggle',fillLog);
+  const cp=mk('button','📋 기록 복사 (채팅에 붙여 넣어 보내 주세요)','acB s');cp.type='button';
+  cp.onclick=async()=>{const d=aget();const txt=JSON.stringify({log:(d.log||[]).slice(-40),hist:(d.hist||[]).slice(-20),use:ttsUse(),eng:engine()},null,1);
+    try{await navigator.clipboard.writeText(txt);cp.textContent='✅ 복사했어요'}catch(e){const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');cp.textContent='✅ 복사했어요'}catch(_){cp.textContent='복사 실패'}ta.remove()}};
+  lg.appendChild(lb);lg.appendChild(cp);pre.appendChild(lg);
   const ev=document.createElement('details');ev.appendChild(mk('summary','🔬 이 코스의 근거와 한계'));
   const eb=mk('div');eb.style.cssText='white-space:pre-line;margin-top:8px';
   eb.textContent=SK.map(s=>'· '+s.name+': '+s.ev).join('\n')+'\n· 위 연구들은 실험실·설문 중심이고, 이 앱으로 연습하면 실제 대화가 는다는 직접 증거는 없어요. 그래서 실전 미션 기록을 함께 쓰도록 만들었어요.';

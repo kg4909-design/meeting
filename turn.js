@@ -69,12 +69,12 @@ function reply(sys,msgs,onSent,sig){
 
 /* 문장마다 Gemini 목소리 합성(미리 받아 두고) → 순서대로 재생. 한도 오류 시 기기 음성으로 이어요 */
 function makeSpeaker(ctx,voice){
-  const q=[];let busy=false,geminiOff=!(gKey()),cancelled=false,ttsN=0;const waiters=[];
+  const q=[];let busy=false,geminiOff=!(gKey())||(CFG.ttsEngine||'gemini')==='browser'||((CFG.ttsEngine||'gemini')==='gemini'&&ttsAllBlocked()),cancelled=false,ttsN=0;const waiters=[];
   const prevVoice=CFG.ttsGVoice;if(voice)CFG.ttsGVoice=voice;
   const stat={gemini:0,device:0,firstMs:null};
   async function synth(text){
     if(geminiOff)return null;
-    try{const pcm=await geminiTtsPcm(text,TTS.gen);return URL.createObjectURL(pcmToWav(pcm,24000))}
+    try{let pcm;if((CFG.ttsEngine||'gemini')==='live'){await liveReady();pcm=await LV.pcm(text)}else pcm=await geminiTtsPcm(text,TTS.gen);return URL.createObjectURL(pcmToWav(pcm,24000))}
     catch(e){if(e&&(e.status===429||e.status===403||e.status===404||e.status===400))geminiOff=true;return null}
   }
   function playUrl(url){return new Promise(res=>{const a=getAudio();a.src=url;a.playbackRate=Number(CFG.ttsRate)||1;try{a.preservesPitch=true}catch(e){}let f=false;const done=()=>{if(f)return;f=true;res()};a.onended=done;a.onerror=done;a.play().catch(done);ctx.setStop(()=>{try{a.pause()}catch(e){}done()})})}

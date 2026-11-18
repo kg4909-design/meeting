@@ -191,10 +191,12 @@ details.moreFb{margin-top:10px}details.moreFb>summary{cursor:pointer;font-weight
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="ttsOn" style="width:auto"> 피드백이 나오면 음성으로 자동으로 읽어주기 (운전·걷기용)</label>
   <label style="display:flex;align-items:center;gap:8px;color:#e0d4f5"><input type="checkbox" id="rbLink" style="width:auto"> 드릴 5문제를 끝내면 100일 리부트의 '대화 연습 1회'를 자동 체크</label>
   <label>읽는 범위</label><select id="ttsScope"><option value="sum">핵심 요약 (점수·잘한 점·아쉬운 점·고칠 점)</option><option value="full">전체 (Before/After, 호감 곡선, 속마음 포함)</option></select>
-  <label>음성 방식</label><select id="ttsEngine"><option value="gemini">Gemini 음성 (화면이 꺼져도 이어서 재생 · API 사용량 소모)</option><option value="browser">기기 내장 음성 (무료 · 화면이 꺼지면 끊길 수 있음)</option></select>
+  <label>음성 방식</label><select id="ttsEngine"><option value="gemini">Gemini 음성 (화면이 꺼져도 이어서 재생 · API 사용량 소모)</option><option value="live">Live 음성 (실험 · 하루 호출 한도 없음 · 아래 시험으로 확인)</option><option value="browser">기기 내장 음성 (무료 · 화면이 꺼지면 끊길 수 있음)</option></select>
   <label>읽는 속도</label><select id="ttsRate"><option value="0.9">조금 느리게</option><option value="1">보통</option><option value="1.15">조금 빠르게</option><option value="1.3">빠르게</option></select>
   <label>읽어주는 목소리 (이 기기에 설치된 한국어 음성)</label><select id="ttsVoice"></select>
   <button class="btn ghost" type="button" onclick="ttsPreview()">▶ 미리 듣기</button>
+  <button class="btn ghost" type="button" onclick="liveTest()">🧪 Live 음성 시험 (그대로 읽는지·속도 확인)</button>
+  <div class="small" id="liveTestNote"></div>
   <div class="small" id="ttsNote"></div>
   <div class="small" id="ttsModelNote"></div>
   <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="keepAwake" style="width:auto"> 앱이 열려 있는 동안 화면 항상 켜두기 (배터리를 더 써요)</label>
@@ -1485,10 +1487,23 @@ function pcmToWav(pcm,rate){
   new Uint8Array(buf,44).set(pcm);return new Blob([buf],{type:'audio/wav'});
 }
 const TTS_MODELS=["gemini-3.8-flash-tts","gemini-3.8-flash-lite-tts","gemini-3.1-flash-tts-preview"];
+/* Gemini 음성(TTS) 호출 기록: 429가 나면 그 모델은 잠시(분당 한도) 또는 오늘 하루(일일 한도) 건너뛰고 다음 모델을 써요 */
+function pacDay(){try{return new Date().toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'})}catch(e){return new Date().toISOString().slice(0,10)}}
+function ttsUse(){const d=LS.get('tts_use_v1',null)||{};if(d.day!==pacDay())return{day:pacDay(),n:{},blk:{}};d.n=d.n||{};d.blk=d.blk||{};return d}
+function ttsUseSave(u){LS.set('tts_use_v1',u)}
+function ttsAllBlocked(){const u=ttsUse(),now=Date.now();const ms=gModels(TTS_MODELS);return ms.length>0&&ms.every(m=>(u.blk[m]||0)>now)}
+function ttsUseTotal(){const u=ttsUse();return Object.keys(u.n).reduce((a,k)=>a+u.n[k],0)}
 async function geminiTtsPcm(text,gen){
   let last;
   for(const m of gModels(TTS_MODELS)){
-    try{const r=await geminiTtsPcmWith(m,text,gen);try{LS.set('tts_last_model',m);ttsFillVoices()}catch(_){}return r}catch(e){last=e;if(e&&(e.status===404||e.status===400))continue;throw e}
+    if((ttsUse().blk[m]||0)>Date.now()){last=last||Object.assign(new Error('이 모델은 한도에 걸려 잠시 건너뛰어요'),{status:429});continue}
+    try{const r=await geminiTtsPcmWith(m,text,gen);try{LS.set('tts_last_model',m);ttsFillVoices();const u=ttsUse();u.n[m]=(u.n[m]||0)+1;ttsUseSave(u)}catch(_){}return r}
+    catch(e){
+      last=e;
+      if(e&&e.status===429){try{const u=ttsUse();const daily=/PerDay|per day/i.test(String(e.message));u.blk[m]=daily?Date.now()+20*3600e3:Date.now()+90e3;ttsUseSave(u)}catch(_){}continue}
+      if(e&&(e.status===404||e.status===400))continue;
+      throw e;
+    }
   }
   throw last||new Error("TTS 모델 없음");
 }
@@ -1506,7 +1521,7 @@ async function geminiTtsPcmWith(model,text,gen){
           body:JSON.stringify({contents:[{parts:[{text:c}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:CFG.ttsGVoice||'Kore'}}}}})
         });
         clearTimeout(to);
-        if(!res.ok){const tx=await res.text();const e=new Error(`HTTP ${res.status} ${tx.slice(0,120)}`);e.status=res.status;throw e}
+        if(!res.ok){const tx=await res.text();const e=new Error(`HTTP ${res.status} ${tx.slice(0,400)}`);e.status=res.status;throw e}
         const j=await res.json();
         const ps=(j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[];
         const d=ps.find(x=>x.inlineData&&x.inlineData.data);
@@ -1563,9 +1578,38 @@ async function ttsGemini(text,opts){
     return ttsBrowser(text,opts,`${why} 이번엔 기기 음성으로 읽어요.${e&&e.status?` (오류 ${e.status})`:''} 한도가 풀리면 다시 Gemini 음성으로 읽어요.`);
   }
 }
+function liveReady(){return new Promise((ok,no)=>lazyLoad('livevoice.js',()=>window.LV,ok,no))}
+async function ttsLive(text,opts){
+  const gen=++TTS.gen;TTS.on=true;TTS.busy=true;ttsUpdateUI();
+  try{
+    await liveReady();
+    const pcm=await LV.pcm(text);
+    if(gen!==TTS.gen)return true;
+    const url=URL.createObjectURL(pcmToWav(pcm,24000));
+    const a=getAudio();a.src=url;a.playbackRate=Number(CFG.ttsRate)||1;try{a.preservesPitch=true}catch(e){}
+    a.onended=()=>{if(gen!==TTS.gen)return;TTS.on=false;TTS.busy=false;ttsUpdateUI();releaseLockIfIdle();if(opts.onDone)opts.onDone()};
+    a.onerror=()=>{if(gen!==TTS.gen)return;TTS.busy=false;ttsBrowser(text,opts,'Live 음성 재생 실패 → 기기 음성으로 읽어요.')};
+    await a.play();TTS.busy=false;ttsUpdateUI();return true;
+  }catch(e){
+    if(gen!==TTS.gen)return true;
+    TTS.busy=false;try{console.warn('Live 음성 실패',e&&e.message)}catch(_){}
+    return ttsBrowser(text,opts,'Live 음성을 쓰지 못해 이번엔 기기 음성으로 읽어요. ('+String(e&&e.message||e).slice(0,50)+')');
+  }
+}
+async function liveTest(){
+  const n=$('liveTestNote');if(!gKey()){n.textContent='Gemini 키를 먼저 넣어 주세요.';return}
+  n.textContent='시험 중이에요... (연결 + 음성 생성, 보통 3~10초)';
+  try{
+    await liveReady();const t=await LV.test();const r=t.r;
+    const url=URL.createObjectURL(pcmToWav(r.pcm,24000));const a=getAudio();a.src=url;a.playbackRate=1;try{await a.play()}catch(e){}
+    const sim=r.sim===null?'받아쓰기 없음(일치율 확인 불가)':Math.round(r.sim*100)+'%';
+    n.textContent=`완료: 첫 소리까지 ${r.first===null?'?':(r.first/1000).toFixed(1)}초, 전체 ${(r.ms/1000).toFixed(1)}초. 원문과 읽은 내용 일치율 ${sim}.${r.sim!==null&&r.sim<0.8?' ⚠️ 글을 바꿔 읽는 경우가 있어요.':''}\n읽은 내용: ${r.said||'(없음)'}\n소리가 자연스러웠다면 위 "음성 방식"에서 Live 음성을 고르세요.`;n.style.whiteSpace='pre-line';
+  }catch(e){n.textContent='실패: '+String(e.message).slice(0,160)}
+}
 function ttsSay(text,opts){
   opts=opts||{};
   const eng=opts.engine||CFG.ttsEngine||'gemini';
+  if(eng==='live'&&gKey())return ttsLive(text,opts);
   if(eng==='gemini'&&(API||($('apiKey')&&$('apiKey').value.trim())))return ttsGemini(text,opts);
   return ttsBrowser(text,opts);
 }
@@ -1770,7 +1814,7 @@ function rematch(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function exportJson(){
-  const data={v:1,app:'첫만남',real:LS.get('real_v1',null),records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null),reflect:LS.get('reflect_v1',null),thanks:LS.get('thx_v1',null)};
+  const data={v:1,app:'첫만남',audio:LS.get('audio_v1',null),real:LS.get('real_v1',null),records:LS.get(RK,[]),memo:LS.get(NK,""),overall:LS.get(OK,null),cfg:CFG,drill:LS.get(DK,null),story:LS.get(SK,null),trivia:LS.get('trivia_v1',null),reflect:LS.get('reflect_v1',null),thanks:LS.get('thx_v1',null)};
   const b=new Blob([JSON.stringify(data)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='첫만남-백업-'+new Date().toISOString().slice(0,10)+'.json';
   document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
