@@ -100,15 +100,41 @@ const cuePartner=()=>{beep(520,110);setTimeout(()=>beep(520,110),160)};
 const cueThink=()=>beep(440,90,0.05);
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 
+/* 고정 문장(레슨·상대 대사·안내)은 Gemini 음성을 한 번만 받아 기기에 저장해 두고 다시 쓰면 호출이 줄어요 */
+function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open('ac_tts_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('c');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}})}
+async function cget(k){try{const db=await idb();return await new Promise(res=>{const q=db.transaction('c').objectStore('c').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)})}catch(e){return null}}
+async function chas(k){try{const db=await idb();return await new Promise(res=>{const q=db.transaction('c').objectStore('c').count(k);q.onsuccess=()=>res(q.result>0);q.onerror=()=>res(false)})}catch(e){return false}}
+async function cput(k,blob){try{const db=await idb();await new Promise(res=>{const tx=db.transaction('c','readwrite');tx.objectStore('c').put(blob,k);tx.oncomplete=()=>res();tx.onerror=()=>res()});
+  const ks=await new Promise(res=>{const q=db.transaction('c').objectStore('c').getAllKeys();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>res([])});
+  if(ks.length>160){const tx=db.transaction('c','readwrite');ks.slice(0,ks.length-160).forEach(x=>tx.objectStore('c').delete(x))}}catch(e){}}
+const ckey=t=>(CFG.ttsGVoice||'Kore')+'|'+t;
+const lineText=(sk,ln)=>sk.narr?`상황입니다. ${ln[0]} 이 사람에게 고마움을 한두 문장으로 말해 보세요.`:ln[0];
+const FIXED_PRACTICE='이제 연습해 볼게요. 비프 소리가 나면 말씀하세요. 막히면 힌트, 넘기려면 다음, 끝내려면 그만이라고 하세요.';
+function staticTexts(){const a=[FIXED_PRACTICE];SK.forEach(sk=>{a.push(sk.lesson);sk.lines.forEach(ln=>a.push(lineText(sk,ln)))});return a}
+async function geminiBlob(text){const pcm=await geminiTtsPcm(text,TTS.gen);return pcmToWav(pcm,24000)}
 const S={abort:null,run:0,on:false,pause:false,stopSay:null,stopListen:null,cmd:null,mins:10,only:'',stat:{},log:[]};
 const alive=t=>S.on&&t===S.run;
 function say(text,opts){
-  return new Promise(res=>{
+  opts=opts||{};
+  return new Promise(async res=>{
     let done=false;
     const f=()=>{if(done)return;done=true;clearTimeout(g);S.stopSay=null;res()};
-    const g=setTimeout(f,15000+text.length*330);
+    const g=setTimeout(f,20000+text.length*330);
     S.stopSay=()=>{try{ttsStop()}catch(e){}f()};
     ui('say',text);
+    const eng=CFG.ttsEngine||'gemini';
+    if(opts.cache&&eng==='gemini'&&gKey()&&!S.gOff){
+      try{
+        const k=ckey(text);let blob=await cget(k);
+        if(!blob){blob=await geminiBlob(text);cput(k,blob);S.calls=(S.calls||0)+1}
+        if(done)return;
+        const a=getAudio();const url=URL.createObjectURL(blob);a.src=url;a.playbackRate=Number(CFG.ttsRate)||1;try{a.preservesPitch=true}catch(e){}
+        const end=()=>{try{URL.revokeObjectURL(url)}catch(e){}f()};a.onended=end;a.onerror=end;
+        S.stopSay=()=>{try{a.pause()}catch(e){}end()};
+        await a.play();return;
+      }catch(e){if(e&&(e.status===429||e.status===403))S.gOff=true}
+      if(done)return;
+    }
     try{const r=ttsSay(ttsClean?ttsClean(text):text,{quiet:true,onDone:f});if(r===false)f();else if(r&&r.then)r.catch(f)}catch(e){f()}
   });
 }
@@ -178,8 +204,8 @@ function fbSpeech(g,tooLong){
 async function skillRound(t,sk,reps,idx,total){
   const d=aget();
   ui('stage',`${idx}/${total} · ${sk.name}`);
-  await say(sk.lesson);if(!alive(t))return;
-  await say(`이제 연습해 볼게요. 비프 소리가 나면 말씀하세요. 막히면 힌트, 넘기려면 다음, 끝내려면 그만이라고 하세요.`);if(!alive(t))return;
+  await say(sk.lesson,{cache:true});if(!alive(t))return;
+  await say(FIXED_PRACTICE,{cache:true});if(!alive(t))return;
   let doneN=0;
   for(let k=1;k<=reps;k++){
     const dd=aget();const ln=pickLine(dd,sk);asave(dd);
@@ -189,7 +215,7 @@ async function skillRound(t,sk,reps,idx,total){
       ui('rep',`${sk.name} ${k}/${reps}${tries>1?' (한 번 더)':''}`);
       cuePartner();await wait(250);if(!alive(t))return;
       ui('partner',ln[0]);
-      await say(sk.narr?`상황입니다. ${ln[0]} 이 사람에게 고마움을 한두 문장으로 말해 보세요.`:ln[0]);if(!alive(t))return;
+      await say(lineText(sk,ln),{cache:true});if(!alive(t))return;
       let lr=await listen({});if(!alive(t))return;
       if(lr.err==='perm'){await say('마이크 권한이 필요해요. 브라우저 설정에서 허용한 뒤 다시 시작해 주세요.');S.on=false;return}
       if(lr.err==='nosr'){await say('이 브라우저는 음성 인식을 지원하지 않아요. 크롬에서 열어 주세요.');S.on=false;return}
@@ -348,6 +374,20 @@ function build(){
   tk.onclick=()=>{S.mins=Number(tm.value)||5;try{ttsUnlock()}catch(e){}els.big.textContent='🔊 준비 중';els.sub.textContent='';els.heard.textContent='';els.stage.textContent='';els.rep.textContent='';els.partner.textContent='';show('run');lazyLoad('turn.js',()=>window.TU,runTalk,e=>{alert(e.message);show('pre')})};
   pre.appendChild(tk);
   pre.appendChild(mk('div','자유 대화: 내가 말하면 AI가 답 글을 쓰고, 그 글을 Gemini 목소리로 읽어요. 실시간 통화처럼 바로 이어지진 않고 답까지 몇 초 걸려요. 연습 코스와 달리 점수는 없고 끝에 피드백 한 번만 들려줘요.','acDim'));
+  const pf=mk('button','⬇️ 연습 음성 미리 받아 두기 (한도 절약)','acB s');pf.type='button';
+  const pfm=mk('div','레슨과 상대 대사 음성을 Gemini에서 한 번만 받아 기기에 저장해요. 저장된 문장은 다시 들어도 한도를 쓰지 않아요. 한도가 차면 거기서 멈춰요. (Gemini 키 필요)','acDim');
+  pf.onclick=async()=>{
+    if(!gKey()){pfm.textContent='Gemini 키가 필요해요.';return}
+    pf.disabled=true;const all=staticTexts();let have=0,got=0;S.gOff=false;
+    for(let i=0;i<all.length;i++){
+      pfm.textContent=`받는 중... ${i+1}/${all.length} (새로 받은 것 ${got}개)`;
+      const k=ckey(all[i]);if(await chas(k)){have++;continue}
+      try{const b=await geminiBlob(all[i]);await cput(k,b);got++}catch(e){pfm.textContent=`${e&&e.status===429?'Gemini 음성 한도가 차서':'오류로'} 여기서 멈췄어요. 새로 받은 ${got}개, 이미 있던 ${have}개. 한도가 풀리면 다시 눌러 이어서 받을 수 있어요.`;pf.disabled=false;return}
+      await wait(400);
+    }
+    pfm.textContent=`끝났어요. 새로 받은 ${got}개, 이미 있던 ${have}개 (총 ${all.length}개)`;pf.disabled=false;
+  };
+  pre.appendChild(pf);pre.appendChild(pfm);
   const ev=document.createElement('details');ev.appendChild(mk('summary','🔬 이 코스의 근거와 한계'));
   const eb=mk('div');eb.style.cssText='white-space:pre-line;margin-top:8px';
   eb.textContent=SK.map(s=>'· '+s.name+': '+s.ev).join('\n')+'\n· 위 연구들은 실험실·설문 중심이고, 이 앱으로 연습하면 실제 대화가 는다는 직접 증거는 없어요. 그래서 실전 미션 기록을 함께 쓰도록 만들었어요.';
